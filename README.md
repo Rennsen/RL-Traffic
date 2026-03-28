@@ -116,7 +116,7 @@ Example request body:
 
 This prototype uses a single-intersection tabular Q-learning setup to remain fast and transparent for demonstration purposes.
 
-For the next-stage we intend to invlude:
+For the next-stage we intend to include:
 
 - Multi-intersection coordination
 - Deep RL agents (DQN/PPO)

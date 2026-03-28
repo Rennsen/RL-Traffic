@@ -352,6 +352,40 @@ button[type="submit"]:disabled {
   animation-delay: 115ms;
 }
 
+.network-panel {
+  padding: 0.95rem 1rem;
+  animation-delay: 130ms;
+}
+
+.network-grid {
+  margin-top: 0.75rem;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0.65rem;
+}
+
+.network-card {
+  border: 1px solid rgba(43, 49, 64, 0.13);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.74);
+  padding: 0.72rem;
+}
+
+.network-label {
+  margin: 0;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #5b6377;
+}
+
+.network-value {
+  margin: 0.35rem 0 0;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 1rem;
+  color: #24324b;
+}
+
 .chart-panel {
   border: 1px solid rgba(43, 49, 64, 0.13);
   border-radius: 14px;

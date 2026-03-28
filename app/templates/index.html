@@ -27,6 +27,7 @@
         <span>District Operations</span>
         <span>RL vs Fixed vs Actual</span>
         <span>Live Flow Playback</span>
+        <span>Coordinated Intersections</span>
       </div>
     </section>
 
@@ -146,6 +147,35 @@
         <p class="stat-label">RL vs Actual Wait Delta</p>
         <p id="actual-wait-improvement" class="stat-value">-</p>
       </article>
+      <article class="stat-card">
+        <p class="stat-label">Busiest Intersection Queue</p>
+        <p id="busiest-intersection-queue" class="stat-value">-</p>
+      </article>
+    </section>
+
+    <section class="panel network-panel">
+      <div class="section-head">
+        <h3>Network Coordination</h3>
+        <p>Inspect how many intersections are coordinated in the active district and which signal wave is currently active.</p>
+      </div>
+      <div class="network-grid">
+        <article class="network-card">
+          <p class="network-label">Intersections</p>
+          <p id="network-intersections" class="network-value">-</p>
+        </article>
+        <article class="network-card">
+          <p class="network-label">Corridors</p>
+          <p id="network-corridors" class="network-value">-</p>
+        </article>
+        <article class="network-card">
+          <p class="network-label">Boundary Nodes</p>
+          <p id="network-boundaries" class="network-value">-</p>
+        </article>
+        <article class="network-card">
+          <p class="network-label">Active Wave</p>
+          <p id="network-wave" class="network-value">-</p>
+        </article>
+      </div>
     </section>
 
     <section class="panel charts-panel">
@@ -208,6 +238,10 @@
         <article>
           <p class="flow-kpi-label">Signal Phase</p>
           <p id="flow-kpi-phase" class="flow-kpi-value">-</p>
+        </article>
+        <article>
+          <p class="flow-kpi-label">Wave Mode</p>
+          <p id="flow-kpi-wave" class="flow-kpi-value">-</p>
         </article>
       </div>
     </section>

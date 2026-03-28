@@ -5,7 +5,7 @@ from typing import Any, Dict, List
 from .agent import QLearningAgent, QLearningHyperParams
 from .config import DISTRICT_PROFILES
 from .models import SimulationRequest
-from .simulation import TrafficEnvironment, generate_traffic_scenario
+from .simulation import TrafficEnvironment, build_network_metadata, generate_traffic_scenario
 
 
 def list_district_catalog() -> List[Dict[str, Any]]:
@@ -21,6 +21,7 @@ def list_district_catalog() -> List[Dict[str, Any]]:
                 "default_params": profile["default_params"],
                 "actual_metrics": profile["actual_metrics"],
                 "layout": profile["layout"],
+                "network": build_network_metadata(profile["layout"]),
             }
         )
     return districts
@@ -45,6 +46,7 @@ def _evaluate_controller(
     mode: str,
     scenario_seed: int,
     effective_config: Dict[str, Any],
+    district_profile: Dict[str, Any],
     agent: QLearningAgent | None = None,
 ) -> Dict[str, Any]:
     scenario = generate_traffic_scenario(
@@ -57,6 +59,7 @@ def _evaluate_controller(
         scenario=scenario,
         service_rate=effective_config["service_rate"],
         switch_penalty=effective_config["switch_penalty"],
+        layout=district_profile["layout"],
     )
 
     state = env.reset()
@@ -213,6 +216,7 @@ def run_experiment(request: SimulationRequest) -> Dict[str, Any]:
             scenario=scenario,
             service_rate=effective_config["service_rate"],
             switch_penalty=effective_config["switch_penalty"],
+            layout=district_profile["layout"],
         )
 
         state = env.reset()
@@ -235,12 +239,14 @@ def run_experiment(request: SimulationRequest) -> Dict[str, Any]:
         mode="rl",
         scenario_seed=evaluation_seed,
         effective_config=effective_config,
+        district_profile=district_profile,
         agent=agent,
     )
     fixed_result = _evaluate_controller(
         mode="fixed",
         scenario_seed=evaluation_seed,
         effective_config=effective_config,
+        district_profile=district_profile,
     )
 
     improvements = _build_improvement_report(
@@ -266,6 +272,7 @@ def run_experiment(request: SimulationRequest) -> Dict[str, Any]:
             "description": district_profile["description"],
             "manager": district_profile["manager"],
             "layout": district_profile["layout"],
+            "network": build_network_metadata(district_profile["layout"]),
         },
         "training": {
             "episode_rewards": training_rewards,

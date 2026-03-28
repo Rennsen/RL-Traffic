@@ -57,6 +57,13 @@ function fmtPct(value) {
   return `${sign}${value.toFixed(2)}%`;
 }
 
+function fmtInt(value) {
+  if (typeof value !== "number" || Number.isNaN(value)) {
+    return "-";
+  }
+  return String(Math.round(value));
+}
+
 function deltaClass(value) {
   if (typeof value !== "number" || Number.isNaN(value)) {
     return "neutral";
@@ -207,23 +214,27 @@ function renderCharts(data) {
   });
 }
 
-function renderSummaryCards(improvements, benchmark) {
+function renderSummaryCards(improvements, benchmark, rlMetrics = null) {
   const waitValue = document.getElementById("wait-improvement");
   const queueValue = document.getElementById("queue-improvement");
   const throughputValue = document.getElementById("throughput-improvement");
   const actualWaitValue = document.getElementById("actual-wait-improvement");
+  const busiestIntersectionValue = document.getElementById("busiest-intersection-queue");
 
   const actualWaitDelta = benchmark?.rl_vs_actual_pct?.avg_wait_pct;
+  const busiestIntersectionQueue = rlMetrics?.busiest_intersection_queue;
 
   waitValue.textContent = fmtPct(improvements.avg_wait_pct);
   queueValue.textContent = fmtPct(improvements.avg_queue_pct);
   throughputValue.textContent = fmtPct(improvements.throughput_pct);
   actualWaitValue.textContent = fmtPct(actualWaitDelta);
+  busiestIntersectionValue.textContent = fmt(busiestIntersectionQueue, 2);
 
   waitValue.className = `stat-value ${deltaClass(improvements.avg_wait_pct)}`;
   queueValue.className = `stat-value ${deltaClass(improvements.avg_queue_pct)}`;
   throughputValue.className = `stat-value ${deltaClass(improvements.throughput_pct)}`;
   actualWaitValue.className = `stat-value ${deltaClass(actualWaitDelta)}`;
+  busiestIntersectionValue.className = "stat-value neutral";
 }
 
 function renderMetricTable(data) {
@@ -274,6 +285,7 @@ function clearResultPanels() {
   document.getElementById("queue-improvement").textContent = "-";
   document.getElementById("throughput-improvement").textContent = "-";
   document.getElementById("actual-wait-improvement").textContent = "-";
+  document.getElementById("busiest-intersection-queue").textContent = "-";
 
   const metricBody = document.getElementById("metric-table-body");
   metricBody.innerHTML = "<tr><td colspan=\"4\" class=\"placeholder\">Run a simulation to populate results.</td></tr>";
@@ -288,6 +300,21 @@ function clearResultPanels() {
   state.charts.queue = null;
   state.charts.throughput = null;
   state.charts.reward = null;
+}
+
+function renderNetworkPanel() {
+  const district = state.districtById[state.activeDistrictId];
+  const result = getActiveResult();
+  const network = result?.district?.network ?? district?.network;
+
+  document.getElementById("network-intersections").textContent = fmtInt(network?.intersection_count);
+  document.getElementById("network-corridors").textContent = fmtInt(network?.corridor_count);
+  document.getElementById("network-boundaries").textContent = fmtInt(network?.boundary_nodes?.length);
+
+  const series = getActiveSeries();
+  const activeWave = series?.active_mode?.[state.flow.step] ?? null;
+  document.getElementById("network-wave").textContent =
+    activeWave === null ? "Awaiting run" : activeWave === 0 ? "NS Priority" : "EW Priority";
 }
 
 function buildDistrictMap() {
@@ -310,6 +337,7 @@ function renderDistrictCards() {
       <p class="meta">Owner: ${district.manager.owner}</p>
       <p class="meta">Pattern: ${district.traffic_pattern}</p>
       <p class="meta">Default cycle: ${district.default_params.fixed_cycle} steps</p>
+      <p class="meta">Network: ${district.network?.intersection_count ?? district.layout.intersections.length} intersections</p>
     `;
     cards.appendChild(card);
   }
@@ -354,13 +382,14 @@ function setActiveDistrict(districtId) {
   renderManagerFocus();
   const cached = state.latestResultsByDistrict[districtId];
   if (cached) {
-    renderSummaryCards(cached.comparison.improvements, cached.benchmark);
+    renderSummaryCards(cached.comparison.improvements, cached.benchmark, cached.comparison.rl);
     renderMetricTable(cached);
     renderActualBenchmarkTable(cached.benchmark);
     renderCharts(cached);
   } else {
     clearResultPanels();
   }
+  renderNetworkPanel();
   drawFlowSnapshot();
   renderManagementTable();
 }
@@ -463,6 +492,11 @@ function getActiveSeries() {
 function updateFlowKpi(stepIndex) {
   const series = getActiveSeries();
   if (!series) {
+    document.getElementById("flow-kpi-queue").textContent = "-";
+    document.getElementById("flow-kpi-throughput").textContent = "-";
+    document.getElementById("flow-kpi-emergency").textContent = "-";
+    document.getElementById("flow-kpi-phase").textContent = "-";
+    document.getElementById("flow-kpi-wave").textContent = "-";
     return;
   }
 
@@ -470,11 +504,13 @@ function updateFlowKpi(stepIndex) {
   const throughput = series.throughput[stepIndex] ?? 0;
   const emergency = series.emergency_queue[stepIndex] ?? 0;
   const phase = series.phase[stepIndex] ?? 0;
+  const wave = series.active_mode?.[stepIndex] ?? 0;
 
   document.getElementById("flow-kpi-queue").textContent = fmt(queue, 2);
   document.getElementById("flow-kpi-throughput").textContent = fmt(throughput, 2);
   document.getElementById("flow-kpi-emergency").textContent = fmt(emergency, 2);
-  document.getElementById("flow-kpi-phase").textContent = phase === 0 ? "NS Green" : "EW Green";
+  document.getElementById("flow-kpi-phase").textContent = phase === 0 ? "NS-led Mix" : "EW-led Mix";
+  document.getElementById("flow-kpi-wave").textContent = wave === 0 ? "NS Priority" : "EW Priority";
 }
 
 function drawRoad(ctx, road) {
@@ -637,11 +673,20 @@ function drawDistrictFeatures(ctx, district) {
   }
 }
 
-function drawIntersection(ctx, node, phase) {
+function drawIntersection(ctx, node, phase, queue = 0, emergency = 0) {
+  const radius = 8 + Math.min(10, queue / 8);
   ctx.fillStyle = phase === 0 ? "rgba(0, 133, 121, 0.9)" : "rgba(222, 107, 26, 0.9)";
   ctx.beginPath();
-  ctx.arc(node.x, node.y, 9, 0, Math.PI * 2);
+  ctx.arc(node.x, node.y, radius, 0, Math.PI * 2);
   ctx.fill();
+
+  if (emergency > 0) {
+    ctx.strokeStyle = "rgba(197, 54, 46, 0.95)";
+    ctx.lineWidth = 2.2;
+    ctx.beginPath();
+    ctx.arc(node.x, node.y, radius + 4, 0, Math.PI * 2);
+    ctx.stroke();
+  }
 
   ctx.fillStyle = "#f8fbff";
   ctx.font = "10px IBM Plex Mono";
@@ -734,9 +779,14 @@ function drawFlowSnapshot() {
     drawRoad(ctx, road);
   }
 
-  const phase = series ? series.phase[stepIndex] ?? 0 : 0;
+  const phaseByIntersection = series?.intersection_phase ?? null;
+  const queueByIntersection = series?.intersection_queue ?? null;
+  const emergencyByIntersection = series?.intersection_emergency ?? null;
   for (const intersection of district.layout.intersections) {
-    drawIntersection(ctx, intersection, phase);
+    const intersectionPhase = phaseByIntersection?.[intersection.id]?.[stepIndex] ?? 0;
+    const intersectionQueue = queueByIntersection?.[intersection.id]?.[stepIndex] ?? 0;
+    const intersectionEmergency = emergencyByIntersection?.[intersection.id]?.[stepIndex] ?? 0;
+    drawIntersection(ctx, intersection, intersectionPhase, intersectionQueue, intersectionEmergency);
   }
 
   if (series) {
@@ -775,6 +825,7 @@ function drawFlowSnapshot() {
   ctx.fillText(`${district.name} | ${state.flow.mode.toUpperCase()} Playback`, 16, 20);
 
   updateFlowKpi(stepIndex);
+  renderNetworkPanel();
 }
 
 function stopFlowPlayback() {
@@ -881,12 +932,13 @@ function bindForm() {
       state.latestResultsByDistrict[payload.district_id] = data;
       state.activeDistrictId = payload.district_id;
 
-      renderSummaryCards(data.comparison.improvements, data.benchmark);
+      renderSummaryCards(data.comparison.improvements, data.benchmark, data.comparison.rl);
       renderMetricTable(data);
       renderActualBenchmarkTable(data.benchmark);
       renderCharts(data);
       renderManagementTable();
       resetFlowSliderForResult();
+      renderNetworkPanel();
 
       setStatus(
         `Completed for ${data.district.name}. Final epsilon: ${fmt(data.training.final_epsilon, 4)} | Q-table states: ${data.training.q_table_size}`,
@@ -918,6 +970,7 @@ async function initialize() {
     renderManagerFocus();
     applyDistrictDefaults(state.activeDistrictId);
     renderManagementTable();
+    renderNetworkPanel();
     drawFlowSnapshot();
 
     bindDistrictControls();
