@@ -13,6 +13,11 @@ TrafficPattern = Literal[
     "random",
 ]
 
+AgentAlgorithm = Literal[
+    "q_learning",
+    "dqn",
+]
+
 DistrictId = Literal[
     "downtown_core",
     "university_ring",
@@ -22,6 +27,7 @@ DistrictId = Literal[
 
 class SimulationRequest(BaseModel):
     district_id: DistrictId = "downtown_core"
+    algorithm: AgentAlgorithm = "q_learning"
 
     episodes: int = Field(default=260, ge=50, le=1500)
     steps_per_episode: int = Field(default=240, ge=60, le=900)

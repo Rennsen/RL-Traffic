@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
-from .agent import QLearningAgent, QLearningHyperParams
+from .agent import RLAgent, build_agent
 from .config import DISTRICT_PROFILES
 from .models import SimulationRequest
 from .simulation import TrafficEnvironment, build_network_metadata, generate_traffic_scenario
@@ -47,7 +47,7 @@ def _evaluate_controller(
     scenario_seed: int,
     effective_config: Dict[str, Any],
     district_profile: Dict[str, Any],
-    agent: QLearningAgent | None = None,
+    agent: RLAgent | None = None,
 ) -> Dict[str, Any]:
     scenario = generate_traffic_scenario(
         steps=effective_config["steps_per_episode"],
@@ -191,15 +191,14 @@ def run_experiment(request: SimulationRequest) -> Dict[str, Any]:
     district_profile = DISTRICT_PROFILES[request.district_id]
     effective_config = _resolve_effective_config(request=request, district_profile=district_profile)
 
-    agent = QLearningAgent(
-        QLearningHyperParams(
-            learning_rate=effective_config["learning_rate"],
-            discount_factor=effective_config["discount_factor"],
-            epsilon_start=effective_config["epsilon_start"],
-            epsilon_min=effective_config["epsilon_min"],
-            epsilon_decay=effective_config["epsilon_decay"],
-            seed=effective_config["seed"],
-        )
+    agent = build_agent(
+        algorithm=effective_config["algorithm"],
+        learning_rate=effective_config["learning_rate"],
+        discount_factor=effective_config["discount_factor"],
+        epsilon_start=effective_config["epsilon_start"],
+        epsilon_min=effective_config["epsilon_min"],
+        epsilon_decay=effective_config["epsilon_decay"],
+        seed=effective_config["seed"],
     )
 
     training_rewards: List[float] = []
@@ -275,11 +274,13 @@ def run_experiment(request: SimulationRequest) -> Dict[str, Any]:
             "network": build_network_metadata(district_profile["layout"]),
         },
         "training": {
+            "algorithm": effective_config["algorithm"],
             "episode_rewards": training_rewards,
             "moving_avg_rewards": _moving_average(training_rewards, window=12),
             "episode_avg_queue": training_avg_queues,
             "final_epsilon": round(agent.epsilon, 4),
-            "q_table_size": agent.q_table_size,
+            "model_size": agent.model_size,
+            "model_label": agent.model_label,
         },
         "comparison": {
             "rl": rl_result["metrics"],

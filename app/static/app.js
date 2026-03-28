@@ -442,6 +442,7 @@ async function fetchDistrictCatalog() {
 function collectFormData() {
   return {
     district_id: document.getElementById("district_id").value,
+    algorithm: document.getElementById("algorithm").value,
     episodes: Number(document.getElementById("episodes").value),
     steps_per_episode: Number(document.getElementById("steps_per_episode").value),
     traffic_pattern: document.getElementById("traffic_pattern").value,
@@ -941,7 +942,7 @@ function bindForm() {
       renderNetworkPanel();
 
       setStatus(
-        `Completed for ${data.district.name}. Final epsilon: ${fmt(data.training.final_epsilon, 4)} | Q-table states: ${data.training.q_table_size}`,
+        `Completed for ${data.district.name}. ${data.training.algorithm.toUpperCase()} | Final epsilon: ${fmt(data.training.final_epsilon, 4)} | ${data.training.model_label}: ${data.training.model_size}`,
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown error";
