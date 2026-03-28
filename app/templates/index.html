@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FlowMind | Adaptive Traffic Signal Optimization</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/styles.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js" defer></script>
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <div class="ambient ambient-one"></div>
+  <div class="ambient ambient-two"></div>
+
+  <main class="layout">
+    <section class="hero panel">
+      <p class="eyebrow">Smart City AI Control Room</p>
+      <h1>FlowMind</h1>
+      <p class="hero-subtitle">
+        Train district-level adaptive traffic controllers, benchmark against fixed timing and actual field flow,
+        then inspect road-level behavior over time with a live map of cars, intersections, and signal phases.
+      </p>
+      <div class="hero-tags">
+        <span>District Operations</span>
+        <span>RL vs Fixed vs Actual</span>
+        <span>Live Flow Playback</span>
+      </div>
+    </section>
+
+    <section class="panel district-panel">
+      <div class="section-head">
+        <h2>District Sections</h2>
+        <p>Select a district to load its road layout, baseline metrics, and responsible team.</p>
+      </div>
+      <div class="district-topbar">
+        <label>
+          Active District
+          <select id="district_id"></select>
+        </label>
+        <article class="manager-focus" id="manager-focus">
+          <h3>District Owner</h3>
+          <p id="manager-owner">-</p>
+          <p id="manager-team">-</p>
+          <p id="manager-contact">-</p>
+        </article>
+      </div>
+      <div id="district-cards" class="district-cards"></div>
+    </section>
+
+    <section class="panel controls-panel">
+      <div class="section-head">
+        <h2>Simulation and Benchmark Config</h2>
+        <p>Run RL training for the selected district and optionally override actual field metrics for benchmarking.</p>
+      </div>
+      <form id="simulation-form" class="controls-grid">
+        <label>
+          Episodes
+          <input type="number" id="episodes" value="260" min="50" max="1500" />
+        </label>
+        <label>
+          Steps Per Episode
+          <input type="number" id="steps_per_episode" value="240" min="60" max="900" />
+        </label>
+        <label>
+          Traffic Pattern
+          <select id="traffic_pattern">
+            <option value="rush_hour_ns">Rush Hour (NS)</option>
+            <option value="rush_hour_ew">Rush Hour (EW)</option>
+            <option value="balanced">Balanced</option>
+            <option value="event_spike">Event Spike</option>
+            <option value="random">Random</option>
+          </select>
+        </label>
+        <label>
+          Fixed Cycle (steps)
+          <input type="number" id="fixed_cycle" value="18" min="4" max="120" />
+        </label>
+        <label>
+          Service Rate
+          <input type="number" id="service_rate" value="3" min="1" max="8" />
+        </label>
+        <label>
+          Emergency Arrival Rate
+          <input type="number" id="emergency_rate" value="0.02" min="0" max="0.3" step="0.01" />
+        </label>
+        <label>
+          Learning Rate
+          <input type="number" id="learning_rate" value="0.12" min="0.01" max="1" step="0.01" />
+        </label>
+        <label>
+          Discount Factor
+          <input type="number" id="discount_factor" value="0.95" min="0.5" max="0.999" step="0.001" />
+        </label>
+        <label>
+          Epsilon Decay
+          <input type="number" id="epsilon_decay" value="0.992" min="0.9" max="0.9999" step="0.0001" />
+        </label>
+        <label>
+          Random Seed
+          <input type="number" id="seed" value="42" min="0" max="10000000" />
+        </label>
+
+        <label>
+          Actual Avg Wait (optional)
+          <input type="number" id="actual_avg_wait" min="0" step="0.1" placeholder="Use district default" />
+        </label>
+        <label>
+          Actual Avg Queue (optional)
+          <input type="number" id="actual_avg_queue" min="0" step="0.1" placeholder="Use district default" />
+        </label>
+        <label>
+          Actual Throughput (optional)
+          <input type="number" id="actual_throughput" min="0" step="1" placeholder="Use district default" />
+        </label>
+        <label>
+          Actual Emergency Wait (optional)
+          <input type="number" id="actual_emergency_avg_wait" min="0" step="0.1" placeholder="Use district default" />
+        </label>
+        <label>
+          Actual Clearance Ratio (optional)
+          <input type="number" id="actual_clearance_ratio" min="0" max="1.5" step="0.01" placeholder="Use district default" />
+        </label>
+
+        <button type="submit" id="run-button">Run Simulation</button>
+      </form>
+      <p id="status" class="status">Loading district catalog...</p>
+    </section>
+
+    <section class="stats-grid" id="summary-cards">
+      <article class="stat-card">
+        <p class="stat-label">Wait Time Improvement (vs Fixed)</p>
+        <p id="wait-improvement" class="stat-value">-</p>
+      </article>
+      <article class="stat-card">
+        <p class="stat-label">Queue Reduction (vs Fixed)</p>
+        <p id="queue-improvement" class="stat-value">-</p>
+      </article>
+      <article class="stat-card">
+        <p class="stat-label">Throughput Gain (vs Fixed)</p>
+        <p id="throughput-improvement" class="stat-value">-</p>
+      </article>
+      <article class="stat-card">
+        <p class="stat-label">RL vs Actual Wait Delta</p>
+        <p id="actual-wait-improvement" class="stat-value">-</p>
+      </article>
+    </section>
+
+    <section class="panel charts-panel">
+      <div class="chart-panel">
+        <h3>Queue Pressure Over Time</h3>
+        <div class="chart-body">
+          <canvas id="queueChart"></canvas>
+        </div>
+      </div>
+      <div class="chart-panel">
+        <h3>Cumulative Throughput</h3>
+        <div class="chart-body">
+          <canvas id="throughputChart"></canvas>
+        </div>
+      </div>
+      <div class="chart-panel">
+        <h3>Training Reward Trend</h3>
+        <div class="chart-body">
+          <canvas id="rewardChart"></canvas>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel flow-panel">
+      <div class="section-head">
+        <h3>District Flow Playback</h3>
+        <p>Drag through time or press play to inspect cars on roads and signal phases at intersections.</p>
+      </div>
+      <div class="flow-controls">
+        <label>
+          Playback Source
+          <select id="flow-mode">
+            <option value="rl">RL Controller</option>
+            <option value="fixed">Fixed Timer</option>
+          </select>
+        </label>
+        <label class="flow-slider-wrap">
+          Time Step
+          <input id="flow-step" type="range" min="0" max="0" value="0" />
+        </label>
+        <button id="flow-play" type="button">Play</button>
+        <p id="flow-step-label" class="mono-text">Step 0 / 0</p>
+      </div>
+      <div class="map-wrap">
+        <canvas id="districtFlowCanvas" width="960" height="560"></canvas>
+      </div>
+      <div class="flow-kpi-row">
+        <article>
+          <p class="flow-kpi-label">Queue At Step</p>
+          <p id="flow-kpi-queue" class="flow-kpi-value">-</p>
+        </article>
+        <article>
+          <p class="flow-kpi-label">Throughput At Step</p>
+          <p id="flow-kpi-throughput" class="flow-kpi-value">-</p>
+        </article>
+        <article>
+          <p class="flow-kpi-label">Emergency Queue</p>
+          <p id="flow-kpi-emergency" class="flow-kpi-value">-</p>
+        </article>
+        <article>
+          <p class="flow-kpi-label">Signal Phase</p>
+          <p id="flow-kpi-phase" class="flow-kpi-value">-</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="panel table-panel">
+      <h3>RL Controller vs Fixed Timer</h3>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Metric</th>
+              <th>RL</th>
+              <th>Fixed</th>
+              <th>Delta (%)</th>
+            </tr>
+          </thead>
+          <tbody id="metric-table-body">
+            <tr>
+              <td colspan="4" class="placeholder">Run a simulation to populate results.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel table-panel">
+      <h3>Benchmark Against Actual Flow</h3>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Metric</th>
+              <th>Actual</th>
+              <th>RL vs Actual (%)</th>
+              <th>Fixed vs Actual (%)</th>
+            </tr>
+          </thead>
+          <tbody id="actual-benchmark-body">
+            <tr>
+              <td colspan="4" class="placeholder">Run a simulation to compare against district baseline flow.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel table-panel">
+      <h3>District Management Console</h3>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>District</th>
+              <th>Owner</th>
+              <th>Team</th>
+              <th>Latest Wait Gain (%)</th>
+              <th>Latest Throughput Gain (%)</th>
+              <th>RL vs Actual Wait (%)</th>
+            </tr>
+          </thead>
+          <tbody id="management-table-body">
+            <tr>
+              <td colspan="6" class="placeholder">District ownership and benchmark output appear here.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+</body>
+</html>
