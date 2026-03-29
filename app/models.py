@@ -16,6 +16,7 @@ TrafficPattern = Literal[
 AgentAlgorithm = Literal[
     "q_learning",
     "dqn",
+    "ppo",
 ]
 
 DistrictId = Literal[

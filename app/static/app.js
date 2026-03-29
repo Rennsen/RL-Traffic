@@ -64,6 +64,19 @@ function fmtInt(value) {
   return String(Math.round(value));
 }
 
+function formatAlgorithmLabel(value) {
+  if (value === "q_learning") {
+    return "Q-Learning";
+  }
+  if (value === "dqn") {
+    return "DQN";
+  }
+  if (value === "ppo") {
+    return "PPO";
+  }
+  return value ?? "-";
+}
+
 function deltaClass(value) {
   if (typeof value !== "number" || Number.isNaN(value)) {
     return "neutral";
@@ -942,7 +955,7 @@ function bindForm() {
       renderNetworkPanel();
 
       setStatus(
-        `Completed for ${data.district.name}. ${data.training.algorithm.toUpperCase()} | Final epsilon: ${fmt(data.training.final_epsilon, 4)} | ${data.training.model_label}: ${data.training.model_size}`,
+        `Completed for ${data.district.name}. ${formatAlgorithmLabel(data.training.algorithm)} | ${data.training.exploration_label}: ${fmt(data.training.exploration_value, 4)} | ${data.training.model_label}: ${data.training.model_size}`,
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown error";
