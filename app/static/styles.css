@@ -257,7 +257,8 @@ select:focus {
 }
 
 button[type="submit"],
-#flow-play {
+#flow-play,
+#sumo-play {
   align-self: end;
   border: none;
   border-radius: 14px;
@@ -273,13 +274,15 @@ button[type="submit"] {
   background: linear-gradient(140deg, var(--teal), #1c6ab8);
 }
 
-#flow-play {
+#flow-play,
+#sumo-play {
   background: linear-gradient(140deg, #2164d4, #008579);
   min-width: 98px;
 }
 
 button[type="submit"]:hover,
-#flow-play:hover {
+#flow-play:hover,
+#sumo-play:hover {
   transform: translateY(-1px);
   box-shadow: 0 10px 18px rgba(15, 69, 111, 0.24);
 }
@@ -357,6 +360,11 @@ button[type="submit"]:disabled {
   animation-delay: 130ms;
 }
 
+.sumo-panel {
+  padding: 0.95rem 1rem;
+  animation-delay: 135ms;
+}
+
 .network-grid {
   margin-top: 0.75rem;
   display: grid;
@@ -384,6 +392,134 @@ button[type="submit"]:disabled {
   font-family: "IBM Plex Mono", monospace;
   font-size: 1rem;
   color: #24324b;
+}
+
+.sumo-grid,
+.sumo-preview-grid {
+  margin-top: 0.75rem;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.65rem;
+}
+
+.sumo-preview-card {
+  border: 1px solid rgba(43, 49, 64, 0.13);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.74);
+  padding: 0.72rem;
+}
+
+.sumo-preview-card h4 {
+  margin: 0 0 0.55rem;
+  font-size: 0.86rem;
+}
+
+.sumo-preview-card pre {
+  margin: 0;
+  min-height: 168px;
+  max-height: 280px;
+  overflow: auto;
+  border-radius: 12px;
+  background: #20283a;
+  color: #eef4ff;
+  padding: 0.7rem;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.72rem;
+  line-height: 1.45;
+}
+
+.sumo-visual-card,
+.sumo-download-card {
+  margin-top: 0.75rem;
+  border: 1px solid rgba(43, 49, 64, 0.13);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.74);
+  padding: 0.72rem;
+}
+
+.sumo-visual-card h4,
+.sumo-download-card h4 {
+  margin: 0 0 0.55rem;
+  font-size: 0.86rem;
+}
+
+.sumo-playback-controls {
+  margin-top: 0.7rem;
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 0.6rem;
+  align-items: end;
+}
+
+.sumo-slider-wrap input {
+  width: 100%;
+}
+
+.sumo-kpi-row {
+  margin-top: 0.7rem;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 0.6rem;
+}
+
+.sumo-kpi-row article {
+  border: 1px solid rgba(41, 46, 63, 0.15);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.75);
+  padding: 0.55rem;
+}
+
+.sumo-kpi-label {
+  margin: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #5b6377;
+  font-size: 0.7rem;
+}
+
+.sumo-kpi-value {
+  margin: 0.32rem 0 0;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.94rem;
+}
+
+.sumo-network-wrap {
+  border: 1px solid rgba(41, 46, 63, 0.2);
+  border-radius: 12px;
+  overflow: hidden;
+  background:
+    radial-gradient(900px 360px at 0% 100%, rgba(31, 83, 130, 0.11), transparent 70%),
+    radial-gradient(760px 340px at 100% 0%, rgba(222, 107, 26, 0.12), transparent 72%),
+    linear-gradient(150deg, #e9f0f7, #f5efe8);
+}
+
+#sumoNetworkCanvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 72vh;
+}
+
+.sumo-file-list {
+  margin: 0;
+  padding-left: 1.1rem;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.sumo-file-list li {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.78rem;
+  color: #334058;
+}
+
+.sumo-file-list a {
+  color: #1a5fbd;
+  text-decoration: none;
+}
+
+.sumo-file-list a:hover {
+  text-decoration: underline;
 }
 
 .chart-panel {
@@ -564,8 +700,20 @@ th {
     grid-template-columns: 1fr;
   }
 
+  .sumo-playback-controls {
+    grid-template-columns: 1fr;
+  }
+
   #flow-play {
     width: 100%;
+  }
+
+  #sumo-play {
+    width: 100%;
+  }
+
+  #sumoNetworkCanvas {
+    max-height: 58vh;
   }
 
   .chart-body {

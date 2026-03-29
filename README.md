@@ -3,9 +3,13 @@
 FlowMind is a Smart City prototype that uses reinforcement learning (RL) to optimize traffic signal behavior at a simulated intersection. The application includes:
 
 - A Q-learning based adaptive signal controller.
+- Deep RL options including DQN and PPO.
 - A fixed-timer baseline controller.
 - Dynamic traffic demand scenarios (rush hours, event spikes, random flows).
 - Emergency vehicle modeling with priority-sensitive rewards.
+- SUMO-ready network export with backend status visibility.
+- In-app SUMO network viewer with downloadable generated XML files.
+- Optional live SUMO runtime execution (when `sumo`, `netconvert`, `traci`, and `sumolib` are installed).
 - A multi-district web dashboard for training, evaluation, live map playback, and management benchmarking.
 
 ## Why This Project Matters
@@ -30,8 +34,9 @@ app/
   main.py              # FastAPI entry point
   models.py            # Request schema
   config.py            # Constants and patterns
-  agent.py             # Q-learning agent
+  agent.py             # Q-learning, DQN, and PPO agents
   simulation.py        # Environment and demand generation
+  sumo.py              # SUMO-ready export and backend status
   service.py           # Training and evaluation pipeline
   templates/
     index.html         # Dashboard page
@@ -82,11 +87,20 @@ After each run, it shows:
 - Benchmark table (RL/fixed versus actual flow)
 - District management console showing owner responsibility and latest gains
 
+When `backend` is set to `sumo`, FlowMind now writes full SUMO XML files to:
+
+- `artifacts/sumo/<district_id>/<run_id>/`
+  - `<district_id>.nodes.xml`
+  - `<district_id>.edges.xml`
+  - `<district_id>.connections.xml`
+  - `<district_id>.rou.xml`
+
 ## API Endpoints
 
 - `GET /` Dashboard page
 - `GET /api/health` Health check
 - `GET /api/districts` District catalog with layout and ownership metadata
+- `GET /api/sumo/status` SUMO availability / export mode status
 - `POST /api/run` Run an experiment and return metrics + series
 
 Example request body:
@@ -94,6 +108,8 @@ Example request body:
 ```json
 {
   "district_id": "downtown_core",
+  "backend": "sumo",
+  "algorithm": "ppo",
   "episodes": 260,
   "steps_per_episode": 240,
   "traffic_pattern": "rush_hour_ns",
@@ -114,12 +130,11 @@ Example request body:
 
 ## Notes and Next Iterations
 
-This prototype uses a single-intersection tabular Q-learning setup to remain fast and transparent for demonstration purposes.
+This prototype now includes multi-intersection district layouts, Tabular Q-learning, DQN, PPO, and connected SUMO-ready network export artifacts.
 
-For the next-stage we intend to include:
+Current next-stage priorities:
 
-- Multi-intersection coordination
-- Deep RL agents (DQN/PPO)
-- SUMO integration for realistic road networks
-- Computer vision based live vehicle counting
-- Priority corridors for ambulances and buses
+- Live SUMO runtime stepping via TraCI when SUMO is installed
+- Persisting generated SUMO files (`nodes`, `edges`, `connections`, `routes`) to a downloadable run package
+- Scenario calibration with real detector traces and corridor-level constraints
+- Priority corridor and transit-signal-priority policies for emergency and bus fleets

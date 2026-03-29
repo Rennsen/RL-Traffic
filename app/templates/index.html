@@ -21,12 +21,12 @@
       <h1>FlowMind</h1>
       <p class="hero-subtitle">
         Train district-level adaptive traffic controllers, benchmark against fixed timing and actual field flow,
-        then inspect road-level behavior over time with a live map of cars, intersections, and signal phases.
+        then inspect road-level behavior over time with live SUMO runtime playback in the network viewer.
       </p>
       <div class="hero-tags">
         <span>District Operations</span>
         <span>RL vs Fixed vs Actual</span>
-        <span>Live Flow Playback</span>
+        <span>SUMO Runtime Playback</span>
         <span>Coordinated Intersections</span>
       </div>
     </section>
@@ -57,6 +57,13 @@
         <p>Run RL training for the selected district and optionally override actual field metrics for benchmarking.</p>
       </div>
       <form id="simulation-form" class="controls-grid">
+        <label>
+          Simulation Backend
+          <select id="backend">
+            <option value="internal">Internal Simulator</option>
+            <option value="sumo">SUMO Live Runtime</option>
+          </select>
+        </label>
         <label>
           RL Algorithm
           <select id="algorithm">
@@ -186,6 +193,84 @@
       </div>
     </section>
 
+    <section class="panel sumo-panel">
+      <div class="section-head">
+        <h3>SUMO Integration</h3>
+        <p>Run SUMO live and watch real runtime vehicle movement directly in the network viewer.</p>
+      </div>
+      <div class="sumo-grid">
+        <article class="network-card">
+          <p class="network-label">Requested Backend</p>
+          <p id="sumo-requested" class="network-value">-</p>
+        </article>
+        <article class="network-card">
+          <p class="network-label">Active Backend</p>
+          <p id="sumo-active" class="network-value">-</p>
+        </article>
+        <article class="network-card">
+          <p class="network-label">Node / Edge Count</p>
+          <p id="sumo-network-counts" class="network-value">-</p>
+        </article>
+        <article class="network-card">
+          <p class="network-label">Routes / Signals</p>
+          <p id="sumo-route-counts" class="network-value">-</p>
+        </article>
+      </div>
+      <p id="sumo-message" class="status">Checking SUMO status...</p>
+      <article class="sumo-visual-card">
+        <h4>SUMO Network Viewer</h4>
+        <div class="sumo-network-wrap">
+          <canvas id="sumoNetworkCanvas" width="960" height="560"></canvas>
+        </div>
+        <div class="sumo-playback-controls">
+          <label class="sumo-slider-wrap">
+            SUMO Step
+            <input id="sumo-step" type="range" min="0" max="0" value="0" />
+          </label>
+          <button id="sumo-play" type="button">Play</button>
+          <p id="sumo-step-label" class="mono-text">SUMO step 0 / 0</p>
+        </div>
+        <div class="sumo-kpi-row">
+          <article>
+            <p class="sumo-kpi-label">Vehicles In Network</p>
+            <p id="sumo-kpi-vehicles" class="sumo-kpi-value">-</p>
+          </article>
+          <article>
+            <p class="sumo-kpi-label">Average Speed</p>
+            <p id="sumo-kpi-avg-speed" class="sumo-kpi-value">-</p>
+          </article>
+          <article>
+            <p class="sumo-kpi-label">Throughput At Step</p>
+            <p id="sumo-kpi-throughput" class="sumo-kpi-value">-</p>
+          </article>
+          <article>
+            <p class="sumo-kpi-label">Queue At Step</p>
+            <p id="sumo-kpi-queue" class="sumo-kpi-value">-</p>
+          </article>
+        </div>
+      </article>
+      <article class="sumo-download-card">
+        <h4>Generated Files</h4>
+        <ul id="sumo-file-links" class="sumo-file-list">
+          <li class="placeholder">Run a simulation with SUMO backend to generate files.</li>
+        </ul>
+      </article>
+      <div class="sumo-preview-grid">
+        <article class="sumo-preview-card">
+          <h4>nodes.xml</h4>
+          <pre id="sumo-nodes-preview">-</pre>
+        </article>
+        <article class="sumo-preview-card">
+          <h4>edges.xml</h4>
+          <pre id="sumo-edges-preview">-</pre>
+        </article>
+        <article class="sumo-preview-card">
+          <h4>routes.xml</h4>
+          <pre id="sumo-routes-preview">-</pre>
+        </article>
+      </div>
+    </section>
+
     <section class="panel charts-panel">
       <div class="chart-panel">
         <h3>Queue Pressure Over Time</h3>
@@ -204,53 +289,6 @@
         <div class="chart-body">
           <canvas id="rewardChart"></canvas>
         </div>
-      </div>
-    </section>
-
-    <section class="panel flow-panel">
-      <div class="section-head">
-        <h3>District Flow Playback</h3>
-        <p>Drag through time or press play to inspect cars on roads and signal phases at intersections.</p>
-      </div>
-      <div class="flow-controls">
-        <label>
-          Playback Source
-          <select id="flow-mode">
-            <option value="rl">RL Controller</option>
-            <option value="fixed">Fixed Timer</option>
-          </select>
-        </label>
-        <label class="flow-slider-wrap">
-          Time Step
-          <input id="flow-step" type="range" min="0" max="0" value="0" />
-        </label>
-        <button id="flow-play" type="button">Play</button>
-        <p id="flow-step-label" class="mono-text">Step 0 / 0</p>
-      </div>
-      <div class="map-wrap">
-        <canvas id="districtFlowCanvas" width="960" height="560"></canvas>
-      </div>
-      <div class="flow-kpi-row">
-        <article>
-          <p class="flow-kpi-label">Queue At Step</p>
-          <p id="flow-kpi-queue" class="flow-kpi-value">-</p>
-        </article>
-        <article>
-          <p class="flow-kpi-label">Throughput At Step</p>
-          <p id="flow-kpi-throughput" class="flow-kpi-value">-</p>
-        </article>
-        <article>
-          <p class="flow-kpi-label">Emergency Queue</p>
-          <p id="flow-kpi-emergency" class="flow-kpi-value">-</p>
-        </article>
-        <article>
-          <p class="flow-kpi-label">Signal Phase</p>
-          <p id="flow-kpi-phase" class="flow-kpi-value">-</p>
-        </article>
-        <article>
-          <p class="flow-kpi-label">Wave Mode</p>
-          <p id="flow-kpi-wave" class="flow-kpi-value">-</p>
-        </article>
       </div>
     </section>
 
