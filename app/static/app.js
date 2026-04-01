@@ -8,8 +8,14 @@ const state = {
   districtById: {},
   activeDistrictId: null,
   latestResultsByDistrict: {},
+  sumoStatus: null,
   flow: {
     mode: "rl",
+    step: 0,
+    playing: false,
+    timer: null,
+  },
+  sumoPlayback: {
     step: 0,
     playing: false,
     timer: null,
@@ -55,6 +61,51 @@ function fmtPct(value) {
   }
   const sign = value > 0 ? "+" : "";
   return `${sign}${value.toFixed(2)}%`;
+}
+
+function fmtInt(value) {
+  if (typeof value !== "number" || Number.isNaN(value)) {
+    return "-";
+  }
+  return String(Math.round(value));
+}
+
+function formatAlgorithmLabel(value) {
+  if (value === "q_learning") {
+    return "Q-Learning";
+  }
+  if (value === "dqn") {
+    return "DQN";
+  }
+  if (value === "ppo") {
+    return "PPO";
+  }
+  return value ?? "-";
+}
+
+function formatBackendLabel(value) {
+  if (value === "internal") {
+    return "Internal";
+  }
+  if (value === "sumo") {
+    return "SUMO Requested";
+  }
+  if (value === "sumo_live_ready") {
+    return "SUMO Ready";
+  }
+  if (value === "sumo_live_runtime") {
+    return "SUMO Runtime";
+  }
+  if (value === "sumo_export_fallback") {
+    return "SUMO Export Fallback";
+  }
+  if (value === "sumo_ready") {
+    return "SUMO Ready";
+  }
+  if (value === "export_fallback") {
+    return "Export Fallback";
+  }
+  return value ?? "-";
 }
 
 function deltaClass(value) {
@@ -207,23 +258,27 @@ function renderCharts(data) {
   });
 }
 
-function renderSummaryCards(improvements, benchmark) {
+function renderSummaryCards(improvements, benchmark, rlMetrics = null) {
   const waitValue = document.getElementById("wait-improvement");
   const queueValue = document.getElementById("queue-improvement");
   const throughputValue = document.getElementById("throughput-improvement");
   const actualWaitValue = document.getElementById("actual-wait-improvement");
+  const busiestIntersectionValue = document.getElementById("busiest-intersection-queue");
 
   const actualWaitDelta = benchmark?.rl_vs_actual_pct?.avg_wait_pct;
+  const busiestIntersectionQueue = rlMetrics?.busiest_intersection_queue;
 
   waitValue.textContent = fmtPct(improvements.avg_wait_pct);
   queueValue.textContent = fmtPct(improvements.avg_queue_pct);
   throughputValue.textContent = fmtPct(improvements.throughput_pct);
   actualWaitValue.textContent = fmtPct(actualWaitDelta);
+  busiestIntersectionValue.textContent = fmt(busiestIntersectionQueue, 2);
 
   waitValue.className = `stat-value ${deltaClass(improvements.avg_wait_pct)}`;
   queueValue.className = `stat-value ${deltaClass(improvements.avg_queue_pct)}`;
   throughputValue.className = `stat-value ${deltaClass(improvements.throughput_pct)}`;
   actualWaitValue.className = `stat-value ${deltaClass(actualWaitDelta)}`;
+  busiestIntersectionValue.className = "stat-value neutral";
 }
 
 function renderMetricTable(data) {
@@ -274,6 +329,7 @@ function clearResultPanels() {
   document.getElementById("queue-improvement").textContent = "-";
   document.getElementById("throughput-improvement").textContent = "-";
   document.getElementById("actual-wait-improvement").textContent = "-";
+  document.getElementById("busiest-intersection-queue").textContent = "-";
 
   const metricBody = document.getElementById("metric-table-body");
   metricBody.innerHTML = "<tr><td colspan=\"4\" class=\"placeholder\">Run a simulation to populate results.</td></tr>";
@@ -288,6 +344,455 @@ function clearResultPanels() {
   state.charts.queue = null;
   state.charts.throughput = null;
   state.charts.reward = null;
+}
+
+function renderNetworkPanel() {
+  const district = state.districtById[state.activeDistrictId];
+  const result = getActiveResult();
+  const network = result?.district?.network ?? district?.network;
+
+  document.getElementById("network-intersections").textContent = fmtInt(network?.intersection_count);
+  document.getElementById("network-corridors").textContent = fmtInt(network?.corridor_count);
+  document.getElementById("network-boundaries").textContent = fmtInt(network?.boundary_nodes?.length);
+
+  const series = getActiveSeries();
+  const waveIndex = Math.max(0, state.sumoPlayback.step);
+  const activeWave = series?.active_mode?.[Math.min(waveIndex, (series?.active_mode?.length ?? 1) - 1)] ?? null;
+  document.getElementById("network-wave").textContent =
+    activeWave === null ? "Awaiting run" : activeWave === 0 ? "NS Priority" : "EW Priority";
+}
+
+function renderSumoFileLinks(backend) {
+  const list = document.getElementById("sumo-file-links");
+  if (!list) {
+    return;
+  }
+
+  list.innerHTML = "";
+  const publicFiles = backend?.artifacts?.public_files ?? {};
+  const entries = Object.entries(publicFiles).sort(([a], [b]) => a.localeCompare(b));
+
+  if (entries.length === 0) {
+    const item = document.createElement("li");
+    item.className = "placeholder";
+    item.textContent = "Run a simulation with SUMO backend to generate downloadable files.";
+    list.appendChild(item);
+    return;
+  }
+
+  for (const [filename, url] of entries) {
+    const item = document.createElement("li");
+    const link = document.createElement("a");
+    link.href = url;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    link.textContent = filename;
+    item.appendChild(link);
+    list.appendChild(item);
+  }
+}
+
+function getActiveRuntimeFrames() {
+  const result = getActiveResult();
+  return result?.backend?.runtime?.trace?.frames ?? [];
+}
+
+function getCurrentRuntimeFrame(frames) {
+  if (!frames || frames.length === 0) {
+    return null;
+  }
+  const index = Math.max(0, Math.min(state.sumoPlayback.step, frames.length - 1));
+  state.sumoPlayback.step = index;
+  return frames[index];
+}
+
+function updateSumoPlaybackWidgets() {
+  const slider = document.getElementById("sumo-step");
+  const label = document.getElementById("sumo-step-label");
+  const playButton = document.getElementById("sumo-play");
+  if (!slider || !label || !playButton) {
+    return;
+  }
+
+  const frames = getActiveRuntimeFrames();
+  const frame = getCurrentRuntimeFrame(frames);
+  if (!frame) {
+    state.sumoPlayback.step = 0;
+    slider.max = "0";
+    slider.value = "0";
+    slider.disabled = true;
+    playButton.disabled = true;
+    playButton.textContent = "Play";
+    label.textContent = "SUMO step 0 / 0";
+    document.getElementById("sumo-kpi-vehicles").textContent = "-";
+    document.getElementById("sumo-kpi-avg-speed").textContent = "-";
+    document.getElementById("sumo-kpi-throughput").textContent = "-";
+    document.getElementById("sumo-kpi-queue").textContent = "-";
+    return;
+  }
+
+  slider.max = String(Math.max(0, frames.length - 1));
+  slider.value = String(state.sumoPlayback.step);
+  slider.disabled = false;
+  playButton.disabled = false;
+  playButton.textContent = state.sumoPlayback.playing ? "Pause" : "Play";
+  label.textContent = `SUMO step ${state.sumoPlayback.step} / ${Math.max(0, frames.length - 1)}`;
+
+  const runtimeSeries = getActiveResult()?.backend?.runtime?.time_series ?? {};
+  const queueNow = runtimeSeries?.queue?.[state.sumoPlayback.step] ?? 0;
+  const throughputNow = runtimeSeries?.throughput?.[state.sumoPlayback.step] ?? 0;
+
+  let speedTotal = 0;
+  for (const vehicle of frame.vehicles ?? []) {
+    speedTotal += Number(vehicle.speed) || 0;
+  }
+  const avgSpeed = (frame.vehicles ?? []).length > 0 ? speedTotal / frame.vehicles.length : 0;
+
+  document.getElementById("sumo-kpi-vehicles").textContent = fmtInt(frame.vehicle_count ?? 0);
+  document.getElementById("sumo-kpi-avg-speed").textContent = fmt(avgSpeed, 2);
+  document.getElementById("sumo-kpi-throughput").textContent = fmt(throughputNow, 2);
+  document.getElementById("sumo-kpi-queue").textContent = fmt(queueNow, 2);
+}
+
+function stopSumoPlayback() {
+  if (state.sumoPlayback.timer) {
+    window.clearInterval(state.sumoPlayback.timer);
+    state.sumoPlayback.timer = null;
+  }
+  state.sumoPlayback.playing = false;
+  updateSumoPlaybackWidgets();
+}
+
+function startSumoPlayback() {
+  const frames = getActiveRuntimeFrames();
+  if (frames.length === 0) {
+    return;
+  }
+
+  stopSumoPlayback();
+  state.sumoPlayback.playing = true;
+  updateSumoPlaybackWidgets();
+
+  state.sumoPlayback.timer = window.setInterval(() => {
+    const maxStep = Math.max(0, frames.length - 1);
+    state.sumoPlayback.step = state.sumoPlayback.step >= maxStep ? 0 : state.sumoPlayback.step + 1;
+    drawSumoNetwork();
+    updateSumoPlaybackWidgets();
+    renderNetworkPanel();
+  }, 220);
+}
+
+function bindSumoPlaybackControls() {
+  const slider = document.getElementById("sumo-step");
+  const playButton = document.getElementById("sumo-play");
+  if (!slider || !playButton) {
+    return;
+  }
+
+  slider.addEventListener("input", (event) => {
+    state.sumoPlayback.step = Number(event.target.value);
+    drawSumoNetwork();
+    updateSumoPlaybackWidgets();
+    renderNetworkPanel();
+  });
+
+  playButton.addEventListener("click", () => {
+    if (state.sumoPlayback.playing) {
+      stopSumoPlayback();
+      return;
+    }
+    startSumoPlayback();
+  });
+}
+
+function getSumoViewerBounds(result, nodes, edges, runtimeFrames) {
+  const backend = result?.backend;
+  if (!backend) {
+    return null;
+  }
+  if (backend.viewer_bounds) {
+    return backend.viewer_bounds;
+  }
+
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minY = Infinity;
+  let maxY = -Infinity;
+
+  function includePoint(x, y) {
+    const px = Number(x);
+    const py = Number(y);
+    if (!Number.isFinite(px) || !Number.isFinite(py)) {
+      return;
+    }
+    minX = Math.min(minX, px);
+    maxX = Math.max(maxX, px);
+    minY = Math.min(minY, py);
+    maxY = Math.max(maxY, py);
+  }
+
+  for (const node of nodes) {
+    includePoint(node.x, node.y);
+  }
+  for (const edge of edges) {
+    includePoint(edge.x1, edge.y1);
+    includePoint(edge.x2, edge.y2);
+  }
+  for (const frame of runtimeFrames ?? []) {
+    for (const vehicle of frame.vehicles ?? []) {
+      includePoint(vehicle.x, vehicle.y);
+    }
+  }
+
+  if (!Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(maxX) || !Number.isFinite(maxY)) {
+    return null;
+  }
+
+  const spanX = Math.max(1, maxX - minX);
+  const spanY = Math.max(1, maxY - minY);
+  const marginX = Math.max(16, spanX * 0.06);
+  const marginY = Math.max(16, spanY * 0.06);
+
+  backend.viewer_bounds = {
+    minX: minX - marginX,
+    maxX: maxX + marginX,
+    minY: minY - marginY,
+    maxY: maxY + marginY,
+  };
+
+  return backend.viewer_bounds;
+}
+
+function drawSumoNetwork() {
+  const canvas = document.getElementById("sumoNetworkCanvas");
+  if (!canvas) {
+    return;
+  }
+
+  const ctx = canvas.getContext("2d");
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = "#f0f4f9";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  const result = getActiveResult();
+  const visualization = result?.backend?.visualization;
+  const nodes = visualization?.nodes ?? [];
+  const edges = visualization?.edges ?? [];
+  const flows = visualization?.flows ?? [];
+  const runtimeFrames = getActiveRuntimeFrames();
+  const frame = getCurrentRuntimeFrame(runtimeFrames);
+
+  if (nodes.length === 0 || edges.length === 0) {
+    ctx.fillStyle = "#31405b";
+    ctx.font = "14px IBM Plex Mono";
+    ctx.textAlign = "center";
+    ctx.fillText("Run with SUMO backend to view generated network geometry.", canvas.width / 2, canvas.height / 2);
+    return;
+  }
+
+  const bounds = getSumoViewerBounds(result, nodes, edges, runtimeFrames);
+  if (!bounds) {
+    return;
+  }
+
+  const minX = bounds.minX;
+  const maxX = bounds.maxX;
+  const minY = bounds.minY;
+  const maxY = bounds.maxY;
+
+  const pad = 14;
+  const spanX = Math.max(1, maxX - minX);
+  const spanY = Math.max(1, maxY - minY);
+  const scaleX = (canvas.width - pad * 2) / spanX;
+  const scaleY = (canvas.height - pad * 2) / spanY;
+  const scale = Math.min(scaleX, scaleY);
+  const offsetX = (canvas.width - spanX * scale) / 2;
+  const offsetY = (canvas.height - spanY * scale) / 2;
+
+  function project(x, y) {
+    return {
+      x: offsetX + (x - minX) * scale,
+      y: offsetY + (y - minY) * scale,
+    };
+  }
+
+  const edgeMidpoints = {};
+
+  for (const edge of edges) {
+    const from = project(edge.x1, edge.y1);
+    const to = project(edge.x2, edge.y2);
+    const laneCount = Math.max(1, Number(edge.lanes) || 1);
+    const roadWidth = Math.max(8, Math.min(26, laneCount * 5.1));
+
+    ctx.strokeStyle = "rgba(58, 68, 86, 0.94)";
+    ctx.lineCap = "round";
+    ctx.lineWidth = roadWidth;
+    ctx.beginPath();
+    ctx.moveTo(from.x, from.y);
+    ctx.lineTo(to.x, to.y);
+    ctx.stroke();
+
+    ctx.strokeStyle = "rgba(124, 136, 159, 0.9)";
+    ctx.lineWidth = Math.max(2.2, roadWidth * 0.36);
+    ctx.beginPath();
+    ctx.moveTo(from.x, from.y);
+    ctx.lineTo(to.x, to.y);
+    ctx.stroke();
+
+    if (roadWidth >= 11) {
+      ctx.strokeStyle = "rgba(244, 247, 255, 0.62)";
+      ctx.lineWidth = Math.max(1.1, roadWidth * 0.1);
+      ctx.setLineDash([9, 10]);
+      ctx.beginPath();
+      ctx.moveTo(from.x, from.y);
+      ctx.lineTo(to.x, to.y);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    edgeMidpoints[edge.id] = {
+      x: (from.x + to.x) / 2,
+      y: (from.y + to.y) / 2,
+    };
+  }
+
+  if (frame) {
+    for (const vehicle of frame.vehicles ?? []) {
+      const point = project(Number(vehicle.x) || 0, Number(vehicle.y) || 0);
+      const speed = Number(vehicle.speed) || 0;
+      const angle = Number(vehicle.angle) || 0;
+      const radius = 2.4 + Math.min(3.2, speed / 4.0);
+
+      ctx.fillStyle = speed < 0.2 ? "rgba(222, 107, 26, 0.92)" : "rgba(33, 100, 212, 0.92)";
+      ctx.beginPath();
+      ctx.arc(point.x, point.y, radius, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.72)";
+      ctx.lineWidth = 0.9;
+      ctx.beginPath();
+      ctx.arc(point.x, point.y, radius, 0, Math.PI * 2);
+      ctx.stroke();
+
+      const angleRad = ((90 - angle) * Math.PI) / 180;
+      const headingLength = radius + 2.6;
+      ctx.strokeStyle = "rgba(31, 41, 64, 0.65)";
+      ctx.lineWidth = 1.1;
+      ctx.beginPath();
+      ctx.moveTo(point.x, point.y);
+      ctx.lineTo(
+        point.x + Math.cos(angleRad) * headingLength,
+        point.y - Math.sin(angleRad) * headingLength,
+      );
+      ctx.stroke();
+    }
+  } else {
+    for (const flow of flows.slice(0, 30)) {
+      const origin = edgeMidpoints[flow.from];
+      if (!origin) {
+        continue;
+      }
+
+      const intensity = Math.max(0.1, Math.min(1.0, Number(flow.probability) || 0.1));
+      ctx.fillStyle = `rgba(222, 107, 26, ${0.35 + intensity * 0.55})`;
+      ctx.beginPath();
+      ctx.arc(origin.x, origin.y, 2 + intensity * 2.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  for (const node of nodes) {
+    const point = project(node.x, node.y);
+    const isTrafficLight = node.type === "traffic_light";
+    const radius = isTrafficLight ? 6.1 : 4.2;
+
+    ctx.fillStyle = isTrafficLight ? "rgba(0, 133, 121, 0.95)" : "rgba(33, 100, 212, 0.85)";
+    ctx.beginPath();
+    ctx.arc(point.x, point.y, radius, 0, Math.PI * 2);
+    ctx.fill();
+
+    if (isTrafficLight) {
+      ctx.fillStyle = "#13243a";
+      ctx.font = "10px IBM Plex Mono";
+      ctx.textAlign = "left";
+      ctx.fillText(node.id, point.x + 6, point.y - 6);
+    }
+  }
+
+  ctx.fillStyle = "#1f2940";
+  ctx.font = "12px IBM Plex Mono";
+  ctx.textAlign = "left";
+  if (frame) {
+    ctx.fillText(
+      `SUMO Runtime | Step ${frame.step ?? state.sumoPlayback.step} | Vehicles ${fmtInt(frame.vehicle_count ?? 0)}`,
+      14,
+      18,
+    );
+    if (frame.truncated) {
+      ctx.fillStyle = "#7c4b21";
+      ctx.fillText("Vehicle drawing truncated for performance.", 14, 36);
+    }
+  } else {
+    ctx.fillText(
+      `SUMO Network | Nodes: ${nodes.length} Edges: ${edges.length} Flows: ${flows.length}`,
+      14,
+      18,
+    );
+  }
+}
+
+function renderSumoPanel() {
+  const result = getActiveResult();
+  const backend = result?.backend;
+  const status = backend?.sumo_status ?? state.sumoStatus;
+  const generatedFiles = backend?.artifacts?.generated_files ?? {};
+  const generatedCount = Object.keys(generatedFiles).length;
+  const outputDirectory =
+    backend?.artifacts?.output_directory_relative ?? backend?.artifacts?.output_directory;
+  const runtime = backend?.runtime ?? null;
+  const runtimeFrames = runtime?.trace?.frames ?? [];
+
+  document.getElementById("sumo-requested").textContent = formatBackendLabel(
+    backend?.requested_backend ?? "internal",
+  );
+  document.getElementById("sumo-active").textContent = formatBackendLabel(
+    backend?.active_backend ?? status?.active_mode ?? "internal",
+  );
+
+  const nodeCount = backend?.artifacts?.node_count ?? 0;
+  const edgeCount = backend?.artifacts?.edge_count ?? 0;
+  const routeCount = backend?.artifacts?.route_count ?? 0;
+  const signalCount = backend?.artifacts?.traffic_light_count ?? 0;
+
+  document.getElementById("sumo-network-counts").textContent = `${fmtInt(nodeCount)} / ${fmtInt(edgeCount)}`;
+  document.getElementById("sumo-route-counts").textContent = `${fmtInt(routeCount)} / ${fmtInt(signalCount)}`;
+  let sumoMessage = backend?.message ?? status?.message ?? "SUMO status unavailable.";
+  if (outputDirectory && generatedCount > 0) {
+    sumoMessage += ` Files saved to: ${outputDirectory}`;
+  }
+  if (runtime && runtime.executed) {
+    const throughput = runtime?.metrics?.throughput ?? 0;
+    const avgQueue = runtime?.metrics?.avg_queue ?? 0;
+    sumoMessage += ` Runtime metrics -> throughput: ${fmt(throughput, 0)}, avg queue: ${fmt(avgQueue, 2)}.`;
+    sumoMessage += ` Playback frames: ${fmtInt(runtimeFrames.length)}.`;
+  } else if (runtime && !runtime.executed && runtime.reason) {
+    sumoMessage += ` Runtime not executed: ${runtime.reason}`;
+    const missingRequirements = runtime?.missing_requirements ?? [];
+    if (missingRequirements.length > 0) {
+      sumoMessage += ` Missing: ${missingRequirements.join(", ")}.`;
+    }
+  }
+  document.getElementById("sumo-message").textContent = sumoMessage;
+
+  document.getElementById("sumo-nodes-preview").textContent =
+    backend?.preview?.nodes_xml || "No SUMO nodes export generated yet.";
+  document.getElementById("sumo-edges-preview").textContent =
+    backend?.preview?.edges_xml || "No SUMO edges export generated yet.";
+  document.getElementById("sumo-routes-preview").textContent =
+    backend?.preview?.routes_xml || "No SUMO routes export generated yet.";
+  renderSumoFileLinks(backend);
+  updateSumoPlaybackWidgets();
+  drawSumoNetwork();
 }
 
 function buildDistrictMap() {
@@ -310,6 +815,7 @@ function renderDistrictCards() {
       <p class="meta">Owner: ${district.manager.owner}</p>
       <p class="meta">Pattern: ${district.traffic_pattern}</p>
       <p class="meta">Default cycle: ${district.default_params.fixed_cycle} steps</p>
+      <p class="meta">Network: ${district.network?.intersection_count ?? district.layout.intersections.length} intersections</p>
     `;
     cards.appendChild(card);
   }
@@ -348,20 +854,23 @@ function applyDistrictDefaults(districtId) {
 
 function setActiveDistrict(districtId) {
   state.activeDistrictId = districtId;
+  stopSumoPlayback();
+  state.sumoPlayback.step = 0;
   document.getElementById("district_id").value = districtId;
   applyDistrictDefaults(districtId);
   renderDistrictCards();
   renderManagerFocus();
   const cached = state.latestResultsByDistrict[districtId];
   if (cached) {
-    renderSummaryCards(cached.comparison.improvements, cached.benchmark);
+    renderSummaryCards(cached.comparison.improvements, cached.benchmark, cached.comparison.rl);
     renderMetricTable(cached);
     renderActualBenchmarkTable(cached.benchmark);
     renderCharts(cached);
   } else {
     clearResultPanels();
   }
-  drawFlowSnapshot();
+  renderNetworkPanel();
+  renderSumoPanel();
   renderManagementTable();
 }
 
@@ -410,9 +919,19 @@ async function fetchDistrictCatalog() {
   return response.json();
 }
 
+async function fetchSumoStatus() {
+  const response = await fetch("/api/sumo/status");
+  if (!response.ok) {
+    throw new Error("Could not load SUMO status");
+  }
+  return response.json();
+}
+
 function collectFormData() {
   return {
     district_id: document.getElementById("district_id").value,
+    algorithm: document.getElementById("algorithm").value,
+    backend: document.getElementById("backend").value,
     episodes: Number(document.getElementById("episodes").value),
     steps_per_episode: Number(document.getElementById("steps_per_episode").value),
     traffic_pattern: document.getElementById("traffic_pattern").value,
@@ -463,6 +982,11 @@ function getActiveSeries() {
 function updateFlowKpi(stepIndex) {
   const series = getActiveSeries();
   if (!series) {
+    document.getElementById("flow-kpi-queue").textContent = "-";
+    document.getElementById("flow-kpi-throughput").textContent = "-";
+    document.getElementById("flow-kpi-emergency").textContent = "-";
+    document.getElementById("flow-kpi-phase").textContent = "-";
+    document.getElementById("flow-kpi-wave").textContent = "-";
     return;
   }
 
@@ -470,11 +994,13 @@ function updateFlowKpi(stepIndex) {
   const throughput = series.throughput[stepIndex] ?? 0;
   const emergency = series.emergency_queue[stepIndex] ?? 0;
   const phase = series.phase[stepIndex] ?? 0;
+  const wave = series.active_mode?.[stepIndex] ?? 0;
 
   document.getElementById("flow-kpi-queue").textContent = fmt(queue, 2);
   document.getElementById("flow-kpi-throughput").textContent = fmt(throughput, 2);
   document.getElementById("flow-kpi-emergency").textContent = fmt(emergency, 2);
-  document.getElementById("flow-kpi-phase").textContent = phase === 0 ? "NS Green" : "EW Green";
+  document.getElementById("flow-kpi-phase").textContent = phase === 0 ? "NS-led Mix" : "EW-led Mix";
+  document.getElementById("flow-kpi-wave").textContent = wave === 0 ? "NS Priority" : "EW Priority";
 }
 
 function drawRoad(ctx, road) {
@@ -637,11 +1163,20 @@ function drawDistrictFeatures(ctx, district) {
   }
 }
 
-function drawIntersection(ctx, node, phase) {
+function drawIntersection(ctx, node, phase, queue = 0, emergency = 0) {
+  const radius = 8 + Math.min(10, queue / 8);
   ctx.fillStyle = phase === 0 ? "rgba(0, 133, 121, 0.9)" : "rgba(222, 107, 26, 0.9)";
   ctx.beginPath();
-  ctx.arc(node.x, node.y, 9, 0, Math.PI * 2);
+  ctx.arc(node.x, node.y, radius, 0, Math.PI * 2);
   ctx.fill();
+
+  if (emergency > 0) {
+    ctx.strokeStyle = "rgba(197, 54, 46, 0.95)";
+    ctx.lineWidth = 2.2;
+    ctx.beginPath();
+    ctx.arc(node.x, node.y, radius + 4, 0, Math.PI * 2);
+    ctx.stroke();
+  }
 
   ctx.fillStyle = "#f8fbff";
   ctx.font = "10px IBM Plex Mono";
@@ -734,9 +1269,14 @@ function drawFlowSnapshot() {
     drawRoad(ctx, road);
   }
 
-  const phase = series ? series.phase[stepIndex] ?? 0 : 0;
+  const phaseByIntersection = series?.intersection_phase ?? null;
+  const queueByIntersection = series?.intersection_queue ?? null;
+  const emergencyByIntersection = series?.intersection_emergency ?? null;
   for (const intersection of district.layout.intersections) {
-    drawIntersection(ctx, intersection, phase);
+    const intersectionPhase = phaseByIntersection?.[intersection.id]?.[stepIndex] ?? 0;
+    const intersectionQueue = queueByIntersection?.[intersection.id]?.[stepIndex] ?? 0;
+    const intersectionEmergency = emergencyByIntersection?.[intersection.id]?.[stepIndex] ?? 0;
+    drawIntersection(ctx, intersection, intersectionPhase, intersectionQueue, intersectionEmergency);
   }
 
   if (series) {
@@ -775,6 +1315,7 @@ function drawFlowSnapshot() {
   ctx.fillText(`${district.name} | ${state.flow.mode.toUpperCase()} Playback`, 16, 20);
 
   updateFlowKpi(stepIndex);
+  renderNetworkPanel();
 }
 
 function stopFlowPlayback() {
@@ -833,7 +1374,6 @@ function bindDistrictControls() {
     const districtId = event.target.value;
     setActiveDistrict(districtId);
     clearActualOverrideInputs();
-    stopFlowPlayback();
     setStatus(`Switched to ${state.districtById[districtId].name}. Run simulation to refresh metrics.`);
   });
 }
@@ -870,6 +1410,8 @@ function bindForm() {
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
 
+    stopSumoPlayback();
+    state.sumoPlayback.step = 0;
     runButton.disabled = true;
     runButton.textContent = "Training and Evaluating...";
     setStatus("Simulation running. This can take a few seconds.");
@@ -880,16 +1422,18 @@ function bindForm() {
 
       state.latestResultsByDistrict[payload.district_id] = data;
       state.activeDistrictId = payload.district_id;
+      state.sumoPlayback.step = 0;
 
-      renderSummaryCards(data.comparison.improvements, data.benchmark);
+      renderSummaryCards(data.comparison.improvements, data.benchmark, data.comparison.rl);
       renderMetricTable(data);
       renderActualBenchmarkTable(data.benchmark);
       renderCharts(data);
       renderManagementTable();
-      resetFlowSliderForResult();
+      renderNetworkPanel();
+      renderSumoPanel();
 
       setStatus(
-        `Completed for ${data.district.name}. Final epsilon: ${fmt(data.training.final_epsilon, 4)} | Q-table states: ${data.training.q_table_size}`,
+        `Completed for ${data.district.name}. ${formatAlgorithmLabel(data.training.algorithm)} on ${formatBackendLabel(data.backend.active_backend)} | ${data.training.exploration_label}: ${fmt(data.training.exploration_value, 4)} | ${data.training.model_label}: ${data.training.model_size}`,
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown error";
@@ -904,6 +1448,15 @@ function bindForm() {
 async function initialize() {
   try {
     const payload = await fetchDistrictCatalog();
+    try {
+      state.sumoStatus = await fetchSumoStatus();
+    } catch {
+      state.sumoStatus = {
+        available: false,
+        active_mode: "export_fallback",
+        message: "SUMO status could not be loaded. The dashboard will still run with internal simulation support.",
+      };
+    }
     state.districts = payload.districts;
     buildDistrictMap();
 
@@ -918,10 +1471,11 @@ async function initialize() {
     renderManagerFocus();
     applyDistrictDefaults(state.activeDistrictId);
     renderManagementTable();
-    drawFlowSnapshot();
+    renderNetworkPanel();
+    renderSumoPanel();
 
     bindDistrictControls();
-    bindFlowControls();
+    bindSumoPlaybackControls();
     bindForm();
 
     setStatus("Ready. Choose a district and run a simulation.");

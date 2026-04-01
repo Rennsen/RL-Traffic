@@ -9,8 +9,12 @@ from fastapi.templating import Jinja2Templates
 
 from .models import SimulationRequest
 from .service import list_district_catalog, run_experiment
+from .sumo import get_sumo_status
 
 BASE_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = BASE_DIR.parent
+ARTIFACTS_DIR = PROJECT_ROOT / "artifacts"
+ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
 
 app = FastAPI(
     title="FlowMind",
@@ -20,6 +24,7 @@ app = FastAPI(
 
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
+app.mount("/artifacts", StaticFiles(directory=str(ARTIFACTS_DIR)), name="artifacts")
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -35,6 +40,11 @@ async def health() -> dict[str, str]:
 @app.get("/api/districts")
 async def districts() -> dict[str, list[dict]]:
     return {"districts": list_district_catalog()}
+
+
+@app.get("/api/sumo/status")
+async def sumo_status() -> dict:
+    return get_sumo_status()
 
 
 @app.post("/api/run")

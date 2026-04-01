@@ -1,11 +1,40 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict, List
 
-from .agent import QLearningAgent, QLearningHyperParams
+from .agent import RLAgent, build_agent
 from .config import DISTRICT_PROFILES
 from .models import SimulationRequest
-from .simulation import TrafficEnvironment, generate_traffic_scenario
+from .simulation import TrafficEnvironment, build_network_metadata, generate_traffic_scenario
+from .sumo import build_sumo_artifacts, get_sumo_status, run_sumo_runtime
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _attach_public_artifact_links(backend_report: Dict[str, Any]) -> Dict[str, Any]:
+    artifacts = backend_report.get("artifacts", {})
+    output_directory = artifacts.get("output_directory")
+    generated_files = artifacts.get("generated_files", {})
+    if not output_directory or not generated_files:
+        return backend_report
+
+    output_path = Path(output_directory).resolve()
+    artifacts_root = (PROJECT_ROOT / "artifacts").resolve()
+    try:
+        output_relative_to_artifacts = output_path.relative_to(artifacts_root).as_posix()
+        output_relative_to_project = output_path.relative_to(PROJECT_ROOT).as_posix()
+    except ValueError:
+        return backend_report
+
+    artifacts["output_directory_relative"] = output_relative_to_project
+    artifacts["public_files"] = {
+        filename: f"/artifacts/{output_relative_to_artifacts}/{filename}"
+        for filename in generated_files.keys()
+    }
+
+    return backend_report
 
 
 def list_district_catalog() -> List[Dict[str, Any]]:
@@ -21,6 +50,7 @@ def list_district_catalog() -> List[Dict[str, Any]]:
                 "default_params": profile["default_params"],
                 "actual_metrics": profile["actual_metrics"],
                 "layout": profile["layout"],
+                "network": build_network_metadata(profile["layout"]),
             }
         )
     return districts
@@ -45,7 +75,8 @@ def _evaluate_controller(
     mode: str,
     scenario_seed: int,
     effective_config: Dict[str, Any],
-    agent: QLearningAgent | None = None,
+    district_profile: Dict[str, Any],
+    agent: RLAgent | None = None,
 ) -> Dict[str, Any]:
     scenario = generate_traffic_scenario(
         steps=effective_config["steps_per_episode"],
@@ -57,6 +88,7 @@ def _evaluate_controller(
         scenario=scenario,
         service_rate=effective_config["service_rate"],
         switch_penalty=effective_config["switch_penalty"],
+        layout=district_profile["layout"],
     )
 
     state = env.reset()
@@ -184,19 +216,76 @@ def _build_actual_comparison(
     }
 
 
+def _build_backend_report(
+    request: SimulationRequest,
+    district_profile: Dict[str, Any],
+    effective_config: Dict[str, Any],
+) -> Dict[str, Any]:
+    if request.backend == "sumo":
+        run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S_%fZ")
+        sumo_output_dir = (
+            PROJECT_ROOT
+            / "artifacts"
+            / "sumo"
+            / request.district_id
+            / run_id
+        )
+        report = build_sumo_artifacts(
+            district_id=request.district_id,
+            district_profile=district_profile,
+            effective_config=effective_config,
+            output_dir=str(sumo_output_dir),
+        )
+        runtime_report = run_sumo_runtime(
+            artifact_report=report,
+            steps=effective_config["steps_per_episode"],
+            seed=effective_config["seed"],
+        )
+        report["runtime"] = runtime_report
+        if runtime_report.get("executed"):
+            report["active_backend"] = "sumo_live_runtime"
+            runtime_metrics = runtime_report.get("metrics", {})
+            report["message"] = (
+                "SUMO runtime executed successfully. "
+                f"Avg queue: {runtime_metrics.get('avg_queue', 0)} | "
+                f"Throughput: {runtime_metrics.get('throughput', 0)}"
+            )
+        return _attach_public_artifact_links(report)
+
+    status = get_sumo_status()
+    return {
+        "requested_backend": "internal",
+        "active_backend": "internal",
+        "available": True,
+        "message": "Internal FlowMind simulator selected for training and evaluation.",
+        "artifacts": {
+            "node_count": 0,
+            "edge_count": 0,
+            "route_count": 0,
+            "traffic_light_count": 0,
+            "connection_count": 0,
+        },
+        "preview": {
+            "nodes_xml": "",
+            "edges_xml": "",
+            "routes_xml": "",
+        },
+        "sumo_status": status,
+    }
+
+
 def run_experiment(request: SimulationRequest) -> Dict[str, Any]:
     district_profile = DISTRICT_PROFILES[request.district_id]
     effective_config = _resolve_effective_config(request=request, district_profile=district_profile)
 
-    agent = QLearningAgent(
-        QLearningHyperParams(
-            learning_rate=effective_config["learning_rate"],
-            discount_factor=effective_config["discount_factor"],
-            epsilon_start=effective_config["epsilon_start"],
-            epsilon_min=effective_config["epsilon_min"],
-            epsilon_decay=effective_config["epsilon_decay"],
-            seed=effective_config["seed"],
-        )
+    agent = build_agent(
+        algorithm=effective_config["algorithm"],
+        learning_rate=effective_config["learning_rate"],
+        discount_factor=effective_config["discount_factor"],
+        epsilon_start=effective_config["epsilon_start"],
+        epsilon_min=effective_config["epsilon_min"],
+        epsilon_decay=effective_config["epsilon_decay"],
+        seed=effective_config["seed"],
     )
 
     training_rewards: List[float] = []
@@ -213,6 +302,7 @@ def run_experiment(request: SimulationRequest) -> Dict[str, Any]:
             scenario=scenario,
             service_rate=effective_config["service_rate"],
             switch_penalty=effective_config["switch_penalty"],
+            layout=district_profile["layout"],
         )
 
         state = env.reset()
@@ -235,12 +325,14 @@ def run_experiment(request: SimulationRequest) -> Dict[str, Any]:
         mode="rl",
         scenario_seed=evaluation_seed,
         effective_config=effective_config,
+        district_profile=district_profile,
         agent=agent,
     )
     fixed_result = _evaluate_controller(
         mode="fixed",
         scenario_seed=evaluation_seed,
         effective_config=effective_config,
+        district_profile=district_profile,
     )
 
     improvements = _build_improvement_report(
@@ -254,25 +346,35 @@ def run_experiment(request: SimulationRequest) -> Dict[str, Any]:
         fixed_metrics=fixed_result["metrics"],
         actual_metrics=actual_benchmark,
     )
+    backend_report = _build_backend_report(
+        request=request,
+        district_profile=district_profile,
+        effective_config=effective_config,
+    )
 
     return {
         "config": {
             "request": request.model_dump(),
             "effective": effective_config,
         },
+        "backend": backend_report,
         "district": {
             "district_id": request.district_id,
             "name": district_profile["name"],
             "description": district_profile["description"],
             "manager": district_profile["manager"],
             "layout": district_profile["layout"],
+            "network": build_network_metadata(district_profile["layout"]),
         },
         "training": {
+            "algorithm": effective_config["algorithm"],
             "episode_rewards": training_rewards,
             "moving_avg_rewards": _moving_average(training_rewards, window=12),
             "episode_avg_queue": training_avg_queues,
-            "final_epsilon": round(agent.epsilon, 4),
-            "q_table_size": agent.q_table_size,
+            "exploration_value": round(agent.exploration_value, 4),
+            "exploration_label": agent.exploration_label,
+            "model_size": agent.model_size,
+            "model_label": agent.model_label,
         },
         "comparison": {
             "rl": rl_result["metrics"],
