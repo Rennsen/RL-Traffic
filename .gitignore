@@ -5,4 +5,11 @@ __pycache__/
 .venv/
 venv/
 .env
+.codex
+.codex/
 artifacts/
+node_modules/
+web/node_modules/
+web/.next/
+web/.env.local
+flowmind.db

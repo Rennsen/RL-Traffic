@@ -58,3 +58,72 @@ class SimulationRequest(BaseModel):
     actual_throughput: float | None = Field(default=None, ge=0.0, le=100_000.0)
     actual_emergency_avg_wait: float | None = Field(default=None, ge=0.0, le=5000.0)
     actual_clearance_ratio: float | None = Field(default=None, ge=0.0, le=1.5)
+
+
+class PresetCreate(BaseModel):
+    name: str = Field(min_length=2, max_length=80)
+    description: str | None = Field(default=None, max_length=240)
+    config: SimulationRequest
+
+
+class Preset(BaseModel):
+    preset_id: str
+    name: str
+    description: str | None = None
+    config: SimulationRequest
+    created_at: str
+
+
+class RunSummary(BaseModel):
+    run_id: str
+    district_id: DistrictId
+    district_name: str
+    created_at: str
+    avg_wait: float
+    avg_queue: float
+    throughput: float
+    clearance_ratio: float
+    improvements: dict
+    status: str | None = None
+
+
+class Alert(BaseModel):
+    alert_id: str
+    district_id: DistrictId
+    title: str
+    message: str
+    severity: Literal["low", "medium", "high"]
+    metric: str
+    value: float
+    threshold: float
+    created_at: str
+
+
+class DistrictSettingsUpdate(BaseModel):
+    default_params: dict | None = None
+    benchmark_overrides: dict | None = None
+
+
+class DistrictNoteCreate(BaseModel):
+    note: str = Field(min_length=2, max_length=1000)
+
+
+class DistrictTargetsUpdate(BaseModel):
+    targets: dict
+
+
+class AIRecommendRequest(BaseModel):
+    district_id: DistrictId
+    summary: dict | None = None
+
+
+class AIChatMessageCreate(BaseModel):
+    district_id: DistrictId
+    role: Literal["user", "assistant"]
+    content: str = Field(min_length=1, max_length=4000)
+
+
+class LocalAuthRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=255)
+    password: str = Field(min_length=6, max_length=128)
+    name: str | None = Field(default=None, max_length=120)

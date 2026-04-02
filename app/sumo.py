@@ -5,8 +5,11 @@ from math import hypot
 from pathlib import Path
 import shutil
 import subprocess
+import os
 from textwrap import dedent
 from typing import Any, Dict, List, Tuple
+import math
+import random
 
 try:
     import sumolib  # type: ignore  # noqa: F401
@@ -19,6 +22,7 @@ except Exception:
 SUMO_BINARY = shutil.which("sumo")
 SUMO_GUI_BINARY = shutil.which("sumo-gui")
 NETCONVERT_BINARY = shutil.which("netconvert")
+XVFB_RUN_BINARY = shutil.which("xvfb-run")
 
 
 def get_sumo_status() -> Dict[str, Any]:
@@ -399,57 +403,8 @@ def _write_sumocfg(
     sumocfg_path.write_text(content, encoding="utf-8")
 
 
-def run_sumo_runtime(
-    artifact_report: Dict[str, Any],
-    steps: int,
-    seed: int,
-) -> Dict[str, Any]:
-    status = get_sumo_status()
-    if not status.get("runtime_ready"):
-        return {
-            "executed": False,
-            "reason": "SUMO runtime requirements are missing.",
-            "missing_requirements": status.get("missing_requirements", []),
-            "metrics": {},
-            "time_series": {"queue": [], "throughput": []},
-            "trace": {"frames": [], "sample_period": 1, "vehicle_limit": 0},
-        }
-
-    artifacts = artifact_report.get("artifacts", {})
-    generated_files = artifacts.get("generated_files", {})
-    network_files = artifacts.get("network_files", {})
-    output_directory = artifacts.get("output_directory")
-    if not output_directory:
-        return {
-            "executed": False,
-            "reason": "SUMO output directory is missing.",
-            "missing_requirements": [],
-            "metrics": {},
-            "time_series": {"queue": [], "throughput": []},
-            "trace": {"frames": [], "sample_period": 1, "vehicle_limit": 0},
-        }
-
-    output_dir = Path(output_directory).resolve()
-    nodes_path = generated_files.get(network_files.get("nodes", ""))
-    edges_path = generated_files.get(network_files.get("edges", ""))
-    connections_path = generated_files.get(network_files.get("connections", ""))
-    routes_path = generated_files.get(network_files.get("routes", ""))
-
-    if not nodes_path or not edges_path or not connections_path or not routes_path:
-        return {
-            "executed": False,
-            "reason": "Generated SUMO XML files are incomplete.",
-            "missing_requirements": [],
-            "metrics": {},
-            "time_series": {"queue": [], "throughput": []},
-            "trace": {"frames": [], "sample_period": 1, "vehicle_limit": 0},
-        }
-
-    base_name = network_files.get("nodes", "network.nodes.xml").replace(".nodes.xml", "")
-    net_path = output_dir / f"{base_name}.net.xml"
-    sumocfg_path = output_dir / f"{base_name}.sumocfg"
-
-    netconvert_cmd = [
+def _netconvert_cmd(nodes_path: Path, edges_path: Path, connections_path: Path, net_path: Path) -> List[str]:
+    return [
         str(NETCONVERT_BINARY),
         "--node-files",
         str(nodes_path),
@@ -459,7 +414,141 @@ def run_sumo_runtime(
         str(connections_path),
         "--output-file",
         str(net_path),
+        "--sidewalks.guess",
+        "--crossings.guess",
+        "--walkingareas",
+        "--default.sidewalk-width",
+        "3.4",
+        "--default.crossing-width",
+        "8.0",
+        "--default.crossing-speed",
+        "1.4",
+        "--default.walkingarea-speed",
+        "1.2",
+        "--walkingareas.join-dist",
+        "2.5",
+        "--crossings.guess.speed-threshold",
+        "18.0",
+        "--tls.crossing-min.time",
+        "6",
+        "--tls.crossing-clearance.time",
+        "3",
     ]
+
+
+def _write_gui_settings(gui_settings_path: Path) -> None:
+    content = dedent(
+        """\
+        <viewsettings>
+          <scheme name="flowmind">
+            <opengl antialiase="1" dither="0"/>
+            <background backgroundColor="0.16,0.55,0.18" showGrid="0" gridXSize="100.00" gridYSize="100.00"/>
+            <edges laneEdgeMode="0" scaleMode="0" laneShowBorders="0" showBikeMarkings="0"
+                   showLinkDecals="1" showLinkRules="1" showRails="0" hideConnectors="1"
+                   widthExaggeration="3.0" minSize="1.35" showDirection="0" showSublanes="0"
+                   spreadSuperposed="0">
+              <colorScheme name="uniform">
+                <entry color="0.00,0.00,0.00" name="road"/>
+                <entry color="0.30,0.30,0.30" name="sidewalk"/>
+                <entry color="0.00,0.00,0.00" name="bike lane"/>
+                <entry color="0.00,0.00,0.00,0" name="green verge"/>
+                <entry color="1.00,1.00,1.00" name="crossing"/>
+                <entry color="0.22,0.22,0.22" name="walkingarea"/>
+                <entry color="0.12,0.12,0.12" name="railway"/>
+                <entry color="0.10,0.10,0.10" name="rails on road"/>
+                <entry color="0.00,0.00,0.00" name="no passenger"/>
+                <entry color="0.35,0.00,0.00" name="closed"/>
+                <entry color="0.15,0.55,0.20" name="connector"/>
+                <entry color="0.80,0.45,0.10" name="forbidden"/>
+              </colorScheme>
+            </edges>
+            <junctions junctionMode="0" drawShape="1" drawCrossingsAndWalkingareas="1"
+                       showLane2Lane="0" junction_minSize="1.25" junction_exaggeration="1.45"
+                       junction_constantSize="0" junction_constantSizeSelected="0">
+              <colorScheme name="uniform">
+                <entry color="0.00,0.00,0.00"/>
+                <entry color="0.12,0.12,0.12" name="waterway"/>
+                <entry color="0,0,0,0" name="railway"/>
+              </colorScheme>
+            </junctions>
+            <vehicles vehicleMode="10" vehicleQuality="2" minVehicleSize="5.0" vehicleExaggeration="5.2" showBlinker="1">
+              <colorScheme name="uniform">
+                <entry color="1.00,0.88,0.05"/>
+              </colorScheme>
+              <colorScheme name="by speed" interpolated="1">
+                <entry color="1.00,0.30,0.00" threshold="0.00"/>
+                <entry color="0.05,0.85,1.00" threshold="13.90"/>
+              </colorScheme>
+            </vehicles>
+          </scheme>
+        </viewsettings>
+        """
+    )
+    gui_settings_path.write_text(content, encoding="utf-8")
+
+
+def run_sumo_runtime(
+    artifact_report: Dict[str, Any],
+    steps: int,
+    seed: int,
+) -> Dict[str, Any]:
+    status = get_sumo_status()
+    if not status.get("runtime_ready"):
+        fallback = _synthesize_runtime_from_visualization(
+            artifact_report=artifact_report,
+            steps=steps,
+            seed=seed,
+        )
+        fallback["executed"] = False
+        fallback["reason"] = (
+            "SUMO runtime requirements are missing. "
+            "Playback frames were synthesized from the generated SUMO network."
+        )
+        fallback["missing_requirements"] = status.get("missing_requirements", [])
+        return fallback
+
+    artifacts = artifact_report.get("artifacts", {})
+    generated_files = artifacts.get("generated_files", {})
+    network_files = artifacts.get("network_files", {})
+    output_directory = artifacts.get("output_directory")
+    if not output_directory:
+        fallback = _synthesize_runtime_from_visualization(
+            artifact_report=artifact_report,
+            steps=steps,
+            seed=seed,
+        )
+        fallback["executed"] = False
+        fallback["reason"] = "SUMO output directory is missing. Playback frames were synthesized."
+        fallback["missing_requirements"] = []
+        return fallback
+
+    output_dir = Path(output_directory).resolve()
+    nodes_path = generated_files.get(network_files.get("nodes", ""))
+    edges_path = generated_files.get(network_files.get("edges", ""))
+    connections_path = generated_files.get(network_files.get("connections", ""))
+    routes_path = generated_files.get(network_files.get("routes", ""))
+
+    if not nodes_path or not edges_path or not connections_path or not routes_path:
+        fallback = _synthesize_runtime_from_visualization(
+            artifact_report=artifact_report,
+            steps=steps,
+            seed=seed,
+        )
+        fallback["executed"] = False
+        fallback["reason"] = "Generated SUMO XML files are incomplete. Playback frames were synthesized."
+        fallback["missing_requirements"] = []
+        return fallback
+
+    base_name = network_files.get("nodes", "network.nodes.xml").replace(".nodes.xml", "")
+    net_path = output_dir / f"{base_name}.net.xml"
+    sumocfg_path = output_dir / f"{base_name}.sumocfg"
+
+    netconvert_cmd = _netconvert_cmd(
+        nodes_path=Path(str(nodes_path)),
+        edges_path=Path(str(edges_path)),
+        connections_path=Path(str(connections_path)),
+        net_path=net_path,
+    )
 
     try:
         subprocess.run(
@@ -633,6 +722,251 @@ def run_sumo_runtime(
     }
 
 
+def run_sumo_gui_snapshots(
+    artifact_report: Dict[str, Any],
+    steps: int,
+    seed: int,
+) -> Dict[str, Any]:
+    if not SUMO_GUI_BINARY:
+        return {
+            "executed": False,
+            "reason": "sumo-gui binary is not available.",
+            "snapshot_dir": "",
+            "frame_count": 0,
+            "stderr": "",
+            "stdout": "",
+        }
+
+    if not SUMO_AVAILABLE:
+        return {
+            "executed": False,
+            "reason": "SUMO python libraries are not available for GUI capture.",
+            "snapshot_dir": "",
+            "frame_count": 0,
+            "stderr": "",
+            "stdout": "",
+        }
+
+    use_xvfb = False
+    prefer_display = os.environ.get("SUMO_GUI_USE_DISPLAY") == "1"
+    if prefer_display:
+        if not os.environ.get("DISPLAY"):
+            return {
+                "executed": False,
+                "reason": "DISPLAY is not set; SUMO-GUI requires a display server.",
+                "snapshot_dir": "",
+                "frame_count": 0,
+                "stderr": "",
+                "stdout": "",
+            }
+    else:
+        if XVFB_RUN_BINARY:
+            use_xvfb = True
+        elif not os.environ.get("DISPLAY"):
+            return {
+                "executed": False,
+                "reason": "DISPLAY is not set; SUMO-GUI requires a display server.",
+                "snapshot_dir": "",
+                "frame_count": 0,
+                "stderr": "",
+                "stdout": "",
+            }
+
+    artifacts = artifact_report.get("artifacts", {})
+    generated_files = artifacts.get("generated_files", {})
+    network_files = artifacts.get("network_files", {})
+    output_directory = artifacts.get("output_directory")
+    if not output_directory:
+        return {
+            "executed": False,
+            "reason": "SUMO output directory is missing.",
+            "snapshot_dir": "",
+            "frame_count": 0,
+            "stderr": "",
+            "stdout": "",
+        }
+
+    output_dir = Path(output_directory).resolve()
+    nodes_path = generated_files.get(network_files.get("nodes", ""))
+    edges_path = generated_files.get(network_files.get("edges", ""))
+    connections_path = generated_files.get(network_files.get("connections", ""))
+    routes_path = generated_files.get(network_files.get("routes", ""))
+
+    if not nodes_path or not edges_path or not connections_path or not routes_path:
+        return {
+            "executed": False,
+            "reason": "Generated SUMO XML files are incomplete.",
+            "snapshot_dir": "",
+            "frame_count": 0,
+            "stderr": "",
+            "stdout": "",
+        }
+
+    base_name = network_files.get("nodes", "network.nodes.xml").replace(".nodes.xml", "")
+    net_path = output_dir / f"{base_name}.net.xml"
+    sumocfg_path = output_dir / f"{base_name}.sumocfg"
+
+    netconvert_cmd = _netconvert_cmd(
+        nodes_path=Path(str(nodes_path)),
+        edges_path=Path(str(edges_path)),
+        connections_path=Path(str(connections_path)),
+        net_path=net_path,
+    )
+
+    try:
+        subprocess.run(
+            netconvert_cmd,
+            cwd=str(output_dir),
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        return {
+            "executed": False,
+            "reason": "netconvert failed while compiling SUMO network for GUI.",
+            "snapshot_dir": "",
+            "frame_count": 0,
+            "stderr": (exc.stderr or "").strip(),
+            "stdout": (exc.stdout or "").strip(),
+        }
+
+    _write_sumocfg(
+        sumocfg_path=sumocfg_path,
+        net_path=net_path,
+        route_path=Path(str(routes_path)),
+        end_step=max(1, int(steps)),
+    )
+
+    snapshot_dir = output_dir / "snapshots"
+    snapshot_dir.mkdir(parents=True, exist_ok=True)
+    snapshot_prefix = str(snapshot_dir / "frame_")
+
+    gui_settings_path = output_dir / "gui_viewsettings.xml"
+    _write_gui_settings(gui_settings_path)
+    snapshot_width = 1200
+    snapshot_height = 800
+
+    gui_cmd = [
+        str(SUMO_GUI_BINARY),
+        "-c",
+        str(sumocfg_path),
+        "--gui-settings-file",
+        str(gui_settings_path),
+        "--window-size",
+        f"{snapshot_width},{snapshot_height}",
+        "--seed",
+        str(int(seed)),
+        "--start",
+        "true",
+        "--quit-on-end",
+        "true",
+        "--delay",
+        "0",
+    ]
+
+    if use_xvfb:
+        gui_cmd = [str(XVFB_RUN_BINARY), "-a", *gui_cmd]
+
+    traci_started = False
+    try:
+        traci.start(gui_cmd)  # type: ignore[name-defined]
+        traci_started = True
+        try:
+            view_ids = traci.gui.getIDList()  # type: ignore[name-defined]
+            view_id = view_ids[0] if view_ids else "View #0"
+        except Exception:
+            view_id = "View #0"
+
+        try:
+            traci.gui.setSchema(view_id, "flowmind")  # type: ignore[name-defined]
+        except Exception:
+            pass
+
+        try:
+            bounds = visualization.get("viewer_bounds")
+            if not bounds:
+                xs = [edge["x1"] for edge in edges] + [edge["x2"] for edge in edges]
+                ys = [edge["y1"] for edge in edges] + [edge["y2"] for edge in edges]
+                if xs and ys:
+                    bounds = {
+                        "minX": min(xs),
+                        "maxX": max(xs),
+                        "minY": min(ys),
+                        "maxY": max(ys),
+                    }
+            if bounds:
+                span_x = max(1.0, float(bounds["maxX"]) - float(bounds["minX"]))
+                span_y = max(1.0, float(bounds["maxY"]) - float(bounds["minY"]))
+                zoom = 1800.0 / max(span_x, span_y)
+                zoom = max(2.0, zoom)
+                center_x = float(bounds["minX"]) + span_x / 2
+                center_y = float(bounds["minY"]) + span_y / 2
+                traci.gui.setZoom(view_id, zoom)  # type: ignore[name-defined]
+                traci.gui.setOffset(view_id, center_x, center_y)  # type: ignore[name-defined]
+        except Exception:
+            pass
+
+        edge_ids: List[str] = []
+        try:
+            edge_ids = [
+                edge_id
+                for edge_id in traci.edge.getIDList()  # type: ignore[name-defined]
+                if not edge_id.startswith(":")
+            ]
+        except Exception:
+            edge_ids = []
+
+        for step_index in range(max(1, int(steps))):
+            try:
+                if edge_ids and traci.vehicle.getIDCount() < 18:  # type: ignore[name-defined]
+                    for i in range(3):
+                        from_edge = rng.choice(edge_ids)
+                        to_edge = rng.choice(edge_ids)
+                        route = traci.simulation.findRoute(from_edge, to_edge)  # type: ignore[name-defined]
+                        if not route.edges:
+                            continue
+                        route_id = f"gui_route_{step_index}_{i}"
+                        traci.route.add(route_id, route.edges)  # type: ignore[name-defined]
+                        vid = f"gui_{step_index}_{i}"
+                        traci.vehicle.add(vid, route_id, depart="now")  # type: ignore[name-defined]
+            except Exception:
+                pass
+            snapshot_file = snapshot_dir / f"frame_{step_index:05d}.png"
+            try:
+                traci.gui.screenshot(  # type: ignore[name-defined]
+                    view_id, str(snapshot_file), snapshot_width, snapshot_height
+                )
+            except Exception:
+                break
+            traci.simulationStep()  # type: ignore[name-defined]
+    except Exception as exc:
+        return {
+            "executed": False,
+            "reason": "sumo-gui failed while generating snapshots.",
+            "snapshot_dir": str(snapshot_dir),
+            "frame_count": 0,
+            "stderr": str(exc),
+            "stdout": "",
+        }
+    finally:
+        if traci_started:
+            try:
+                traci.close(False)  # type: ignore[name-defined]
+            except Exception:
+                pass
+
+    frames = sorted(snapshot_dir.glob("frame_*.png"))
+    return {
+        "executed": len(frames) > 0,
+        "reason": "",
+        "snapshot_dir": str(snapshot_dir),
+        "frame_count": len(frames),
+        "stderr": "",
+        "stdout": "",
+    }
+
+
 def _build_visualization_payload(
     nodes: List[Dict[str, Any]],
     edges: List[Dict[str, Any]],
@@ -685,6 +1019,154 @@ def _build_visualization_payload(
     }
 
 
+def _synthesize_runtime_from_visualization(
+    artifact_report: Dict[str, Any],
+    steps: int,
+    seed: int,
+) -> Dict[str, Any]:
+    visualization = artifact_report.get("visualization", {}) or {}
+    edges = visualization.get("edges", []) or []
+    flows = visualization.get("flows", []) or []
+
+    if not edges:
+        return {
+            "executed": False,
+            "reason": "No SUMO network data available to synthesize playback.",
+            "missing_requirements": [],
+            "metrics": {},
+            "time_series": {"queue": [], "throughput": []},
+            "trace": {"frames": [], "sample_period": 1, "vehicle_limit": 0},
+        }
+
+    edge_map = {edge["id"]: edge for edge in edges}
+    edge_ids = list(edge_map.keys())
+    outgoing_by_node: Dict[str, List[str]] = defaultdict(list)
+    for edge in edges:
+        from_node = str(edge.get("from"))
+        outgoing_by_node[from_node].append(edge["id"])
+    rng = random.Random(seed)
+
+    frames: List[Dict[str, Any]] = []
+    queue_series: List[float] = []
+    throughput_series: List[float] = []
+
+    max_steps = max(1, int(steps))
+    vehicle_limit = 280
+    active: List[Dict[str, Any]] = []
+    throughput_step = 0.0
+
+    if not flows:
+        flows = [{"from": edge["id"], "to": edge["id"], "probability": 0.08} for edge in edges]
+
+    for step_index in range(max_steps):
+        # Spawn new vehicles per flow
+        for flow in flows:
+            edge = edge_map.get(flow.get("from")) or edge_map.get(flow.get("to"))
+            if not edge:
+                continue
+            probability = float(flow.get("probability", 0.08))
+            expected = min(6.0, probability * 10.0)
+            spawn = int(expected)
+            if rng.random() < (expected - spawn):
+                spawn += 1
+            edge_id = str(edge.get("id", "edge"))
+            for i in range(spawn):
+                speed = 6.0 + rng.random() * 6.0
+                active.append(
+                    {
+                        "id": f"{edge_id}-{step_index}-{i}",
+                        "edge_id": edge_id,
+                        "t": rng.random() * 0.05,
+                        "speed": speed,
+                    }
+                )
+
+        vehicles_now: List[Dict[str, Any]] = []
+        still_active: List[Dict[str, Any]] = []
+        throughput_step = 0.0
+
+        for vehicle in active:
+            edge = edge_map.get(vehicle["edge_id"])
+            if not edge:
+                continue
+            dx = edge["x2"] - edge["x1"]
+            dy = edge["y2"] - edge["y1"]
+            length = float(edge.get("length") or math.hypot(dx, dy) or 1.0)
+            dt = (vehicle["speed"] / max(1.0, length)) * 0.8
+            vehicle["t"] = vehicle["t"] + dt
+
+            if vehicle["t"] >= 1.0:
+                throughput_step += 1.0
+                to_node = str(edge.get("to"))
+                candidates = outgoing_by_node.get(to_node, [])
+                if not candidates and edge_ids:
+                    candidates = edge_ids
+                if candidates:
+                    vehicle["edge_id"] = rng.choice(candidates)
+                    vehicle["t"] = 0.0
+                else:
+                    continue
+
+            edge = edge_map.get(vehicle["edge_id"])
+            if not edge:
+                continue
+            dx = edge["x2"] - edge["x1"]
+            dy = edge["y2"] - edge["y1"]
+            t = vehicle["t"]
+            x = edge["x1"] + dx * t
+            y = edge["y1"] + dy * t
+            angle = math.degrees(math.atan2(dy, dx))
+            vehicles_now.append(
+                {
+                    "id": vehicle["id"],
+                    "x": round(float(x), 2),
+                    "y": round(float(y), 2),
+                    "speed": round(float(vehicle["speed"]), 2),
+                    "angle": round(float(angle), 1),
+                }
+            )
+            still_active.append(vehicle)
+
+        active = still_active[: max(1, vehicle_limit * 2)]
+        total_count = len(active)
+        queue_value = float(total_count) * 1.1
+
+        queue_series.append(queue_value)
+        throughput_series.append(throughput_step)
+
+        frames.append(
+            {
+                "step": step_index,
+                "sim_time": float(step_index),
+                "vehicle_count": total_count,
+                "truncated": len(vehicles_now) > vehicle_limit,
+                "vehicles": vehicles_now[:vehicle_limit],
+            }
+        )
+
+    avg_queue = (sum(queue_series) / len(queue_series)) if queue_series else 0.0
+    throughput_total = sum(throughput_series)
+
+    return {
+        "executed": False,
+        "reason": "Synthesized SUMO playback frames.",
+        "missing_requirements": [],
+        "metrics": {
+            "avg_queue": round(avg_queue, 3),
+            "throughput": round(throughput_total, 3),
+        },
+        "time_series": {
+            "queue": queue_series,
+            "throughput": throughput_series,
+        },
+        "trace": {
+            "frames": frames,
+            "sample_period": 1,
+            "vehicle_limit": 280,
+        },
+    }
+
+
 def build_sumo_artifacts(
     district_id: str,
     district_profile: Dict[str, Any],
@@ -732,14 +1214,25 @@ def build_sumo_artifacts(
     connections_xml_lines.append("</connections>")
 
     routes_xml_lines = ["<routes>"]
-    routes_xml_lines.append('  <vType id="car" accel="1.9" decel="4.5" sigma="0.5" length="5.0" maxSpeed="20" />')
+    vtypes = [
+        ('car_yellow', '1,0.9,0.1'),
+        ('car_orange', '1,0.55,0.1'),
+        ('car_green', '0.1,0.95,0.2'),
+        ('car_cyan', '0.1,0.8,1'),
+    ]
+    for vtype_id, color in vtypes:
+        routes_xml_lines.append(
+            f'  <vType id="{vtype_id}" accel="1.9" decel="4.5" sigma="0.5" length="6.5" '
+            f'maxSpeed="20" guiShape="passenger" color="{color}" />'
+        )
     routes_xml_lines.extend(
         [
             (
                 f'  <flow id="{flow["id"]}" from="{flow["from"]}" to="{flow["to"]}" '
-                f'begin="{flow["begin"]}" end="{flow["end"]}" probability="{flow["probability"]}" type="car" />'
+                f'begin="{flow["begin"]}" end="{flow["end"]}" probability="{flow["probability"]}" '
+                f'type="{vtypes[index % len(vtypes)][0]}" />'
             )
-            for flow in flows
+            for index, flow in enumerate(flows)
         ]
     )
     routes_xml_lines.append("</routes>")

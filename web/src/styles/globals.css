@@ -1,0 +1,111 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --surface-2: #f1f2f4;
+  --ink: #111827;
+  --muted: #6b7280;
+  --accent: #2563eb;
+  --accent-2: #0f766e;
+  --success: #16a34a;
+  --warning: #f59e0b;
+  --danger: #ef4444;
+  --border: #e2e4e8;
+  --shadow-1: 0 1px 2px rgba(15, 23, 42, 0.06);
+
+  /* backwards compat */
+  --panel: var(--surface);
+  --panel-strong: var(--surface);
+  --line: var(--border);
+  --accent-soft: rgba(37, 99, 235, 0.12);
+}
+
+.dark {
+  --bg: #0f1115;
+  --surface: #151820;
+  --surface-2: #1c2027;
+  --ink: #f8fafc;
+  --muted: #9aa3af;
+  --accent: #60a5fa;
+  --accent-2: #2dd4bf;
+  --success: #22c55e;
+  --warning: #fbbf24;
+  --danger: #f87171;
+  --border: #2a2f37;
+  --shadow-1: 0 1px 2px rgba(6, 10, 18, 0.7);
+  --accent-soft: rgba(96, 165, 250, 0.15);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  min-height: 100vh;
+  background: linear-gradient(180deg, #f9fbff 0%, #f6f7fb 60%, #f6f7fb 100%);
+  color: var(--ink);
+  font-feature-settings: "ss01" on, "ss02" on;
+}
+
+.dark body {
+  background: radial-gradient(circle at top, #1b1f26 0%, #0f1115 60%);
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  font-family: var(--font-display), var(--font-sans), ui-sans-serif, system-ui;
+  letter-spacing: -0.02em;
+}
+
+@layer components {
+  .panel {
+    @apply rounded-xl border border-border bg-surface shadow-soft;
+  }
+
+  .panel-strong {
+    @apply rounded-xl border border-border bg-surface shadow-soft;
+  }
+
+  .eyebrow {
+    @apply text-[0.72rem] font-semibold text-muted opacity-80 tracking-normal;
+  }
+
+  .mono {
+    @apply font-mono text-[0.78rem] text-muted;
+  }
+
+  .enter {
+    animation: rise 600ms ease both;
+  }
+
+  .hover-lift {
+    @apply transition duration-300 hover:-translate-y-0.5 hover:border-accent;
+  }
+
+  .focus-ring {
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40;
+  }
+
+  .stagger > * {
+    animation: rise 600ms ease both;
+    animation-delay: calc(var(--delay, 0) * 1ms);
+  }
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

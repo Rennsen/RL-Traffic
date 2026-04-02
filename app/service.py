@@ -8,7 +8,8 @@ from .agent import RLAgent, build_agent
 from .config import DISTRICT_PROFILES
 from .models import SimulationRequest
 from .simulation import TrafficEnvironment, build_network_metadata, generate_traffic_scenario
-from .sumo import build_sumo_artifacts, get_sumo_status, run_sumo_runtime
+from .sumo import build_sumo_artifacts, get_sumo_status, run_sumo_runtime, run_sumo_gui_snapshots
+from .store import record_run
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -242,6 +243,12 @@ def _build_backend_report(
             seed=effective_config["seed"],
         )
         report["runtime"] = runtime_report
+        gui_report = run_sumo_gui_snapshots(
+            artifact_report=report,
+            steps=effective_config["steps_per_episode"],
+            seed=effective_config["seed"],
+        )
+        report["gui"] = gui_report
         if runtime_report.get("executed"):
             report["active_backend"] = "sumo_live_runtime"
             runtime_metrics = runtime_report.get("metrics", {})
@@ -274,7 +281,7 @@ def _build_backend_report(
     }
 
 
-def run_experiment(request: SimulationRequest) -> Dict[str, Any]:
+def run_experiment(request: SimulationRequest, created_by: str | None = None) -> Dict[str, Any]:
     district_profile = DISTRICT_PROFILES[request.district_id]
     effective_config = _resolve_effective_config(request=request, district_profile=district_profile)
 
@@ -352,7 +359,7 @@ def run_experiment(request: SimulationRequest) -> Dict[str, Any]:
         effective_config=effective_config,
     )
 
-    return {
+    result = {
         "config": {
             "request": request.model_dump(),
             "effective": effective_config,
@@ -363,6 +370,9 @@ def run_experiment(request: SimulationRequest) -> Dict[str, Any]:
             "name": district_profile["name"],
             "description": district_profile["description"],
             "manager": district_profile["manager"],
+            "traffic_pattern": district_profile.get("traffic_pattern"),
+            "default_params": district_profile.get("default_params", {}),
+            "actual_metrics": district_profile.get("actual_metrics", {}),
             "layout": district_profile["layout"],
             "network": build_network_metadata(district_profile["layout"]),
         },
@@ -387,3 +397,4 @@ def run_experiment(request: SimulationRequest) -> Dict[str, Any]:
             "fixed": fixed_result["series"],
         },
     }
+    return record_run(result, created_by=created_by)
