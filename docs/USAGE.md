@@ -2,6 +2,17 @@
 
 This guide assumes the app is already running through Docker Compose.
 
+## Quick Reviewer Path
+
+If you only want the shortest useful evaluation path:
+
+1. Open `http://localhost:3000`
+2. Sign in with `admin@flowmind.local` / `change-me-now`
+3. Open `Simulation Lab`
+4. Run a simulation with backend set to `sumo`
+5. Open `Playback`
+6. Inspect the generated SUMO frames and exported files
+
 ## URLs
 
 - Frontend: <http://localhost:3000>
@@ -30,6 +41,7 @@ You can also create a local account from the auth page.
 6. Run the simulation.
 7. Review KPIs, comparisons, and district metrics.
 8. Open `Playback` to inspect the generated SUMO visualization frames.
+9. Open `Reports`, `Executive`, or `Admin` for management-facing views.
 
 ## Key Pages
 
@@ -84,6 +96,8 @@ The backend writes persistent data to Docker volumes:
 - SUMO artifacts
 - generated playback frames
 
+The database is stored automatically in the `flowmind-data` Docker volume, so no separate database setup is needed.
+
 SUMO artifacts include files such as:
 
 - `nodes.xml`
@@ -104,3 +118,8 @@ docker compose down -v
 ```
 
 This removes the database volume and artifact volume.
+
+## Related Docs
+
+- Overview and setup: [README.md](/home/tarek/Desktop/projects/RL-Traffic/README.md)
+- Reviewer walkthrough: [docs/DEMO.md](/home/tarek/Desktop/projects/RL-Traffic/docs/DEMO.md)
